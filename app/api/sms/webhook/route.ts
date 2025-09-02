@@ -9,7 +9,7 @@ const supabase = createClient(
 );
 
 export async function POST(request: NextRequest) {
-  try {
+  try { 
     const formData = await request.formData();
     
     const messageSid = formData.get('MessageSid') as string;

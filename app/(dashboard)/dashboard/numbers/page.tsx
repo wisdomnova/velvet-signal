@@ -10,7 +10,7 @@ import {
   Search, 
   Plus, 
   Trash2, 
-  MessageSquare,
+  MessageSquare, 
   PhoneCall,
   MapPin,
   Calendar,

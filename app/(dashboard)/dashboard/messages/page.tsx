@@ -7,14 +7,14 @@ import { motion } from 'framer-motion';
 import { useAuthStore } from '@/store/auth';
 import { 
   MessageSquare, 
-  Send, 
+  Send,  
   Search, 
   Plus, 
   Trash2, 
   Phone,
   Calendar,
   User,
-  Filter,
+  Filter, 
   MoreVertical
 } from 'lucide-react';
 

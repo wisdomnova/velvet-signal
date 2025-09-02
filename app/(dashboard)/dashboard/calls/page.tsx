@@ -2,9 +2,9 @@
 
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { useAuthStore } from '@/store/auth';
+import { useAuthStore } from '@/store/auth'; 
 import { 
   Phone, 
   PhoneCall, 
@@ -19,8 +19,14 @@ import {
   Play,
   Pause,
   Download,
-  MoreVertical
-} from 'lucide-react';
+  MoreVertical,
+  PhoneOff,
+  Volume2,
+  VolumeX
+} from 'lucide-react'; 
+
+// Import the Twilio Voice SDK
+import { Device } from '@twilio/voice-sdk';
 
 interface Call {
   id: string;
@@ -29,10 +35,18 @@ interface Call {
   to: string;
   direction: 'inbound' | 'outbound';
   status: 'completed' | 'busy' | 'no-answer' | 'failed' | 'in-progress';
-  duration: number; // in seconds
+  duration: number;
   dateCreated: string;
   price?: string;
   recordingUrl?: string;
+}
+
+interface LiveCall {
+  sid: string;
+  status: string;
+  direction: 'inbound' | 'outbound';
+  from: string;
+  to: string;
 }
 
 export default function CallsPage() {
@@ -45,10 +59,105 @@ export default function CallsPage() {
   const [showNewCall, setShowNewCall] = useState(false);
   const [newCallTo, setNewCallTo] = useState('');
   const [isDialing, setIsDialing] = useState(false);
+  
+  // Voice SDK states
+  const [device, setDevice] = useState<Device | null>(null);
+  const [isVoiceReady, setIsVoiceReady] = useState(false);
+  const [activeCall, setActiveCall] = useState<LiveCall | null>(null);
+  const [incomingCall, setIncomingCall] = useState<any>(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  
+  const currentCallRef = useRef<any>(null);
 
   useEffect(() => {
     fetchCalls();
+    initializeVoice();
+    
+    return () => {
+      if (device) {
+        device.disconnectAll();
+        device.unregister();
+      }
+    };
   }, []);
+
+  const initializeVoice = async () => {
+    try {
+      setVoiceError(null);
+      
+      // Get access token
+      const response = await fetch('/api/voice/token', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to get voice token');
+      }
+
+      const { token: accessToken } = await response.json();
+      
+      // Initialize Twilio Device
+      const twilioDevice = new Device(accessToken, {
+        logLevel: 1,
+      });
+      
+      twilioDevice.on('ready', () => {
+        console.log('Twilio Device ready');
+        setIsVoiceReady(true);
+      });
+
+      twilioDevice.on('error', (error) => {
+        console.error('Twilio Device error:', error);
+        setVoiceError(error.message || 'Voice connection error');
+        setIsVoiceReady(false);
+      });
+
+      twilioDevice.on('incoming', (call) => {
+        console.log('Incoming call from:', call.parameters.From);
+        
+        setIncomingCall(call);
+        setActiveCall({
+          sid: call.parameters.CallSid || '',
+          status: 'ringing',
+          direction: 'inbound',
+          from: call.parameters.From || '',
+          to: call.parameters.To || '',
+        });
+
+        call.on('accept', () => {
+          console.log('Incoming call accepted');
+          setIncomingCall(null);
+          currentCallRef.current = call;
+          setActiveCall(prev => prev ? { ...prev, status: 'in-progress' } : null);
+        });
+
+        call.on('disconnect', () => {
+          console.log('Incoming call ended');
+          setActiveCall(null);
+          setIncomingCall(null);
+          currentCallRef.current = null;
+          fetchCalls(); // Refresh call history
+        });
+
+        call.on('reject', () => {
+          console.log('Incoming call rejected');
+          setActiveCall(null);
+          setIncomingCall(null);
+          currentCallRef.current = null;
+        });
+      });
+
+      await twilioDevice.register();
+      setDevice(twilioDevice);
+      
+    } catch (error) {
+      console.error('Failed to initialize voice:', error);
+      setVoiceError(error instanceof Error ? error.message : 'Failed to initialize voice');
+    }
+  };
 
   const fetchCalls = async () => {
     try {
@@ -70,7 +179,50 @@ export default function CallsPage() {
     }
   };
 
-  const makeCall = async () => {
+  const makeWebCall = async () => {
+    if (!newCallTo.trim() || !device || !isVoiceReady) return;
+
+    try {
+      setIsDialing(true);
+      
+      const call = await device.connect({
+        params: { To: newCallTo }
+      });
+      
+      currentCallRef.current = call;
+      setActiveCall({
+        sid: '',
+        status: 'connecting',
+        direction: 'outbound',
+        from: '',
+        to: newCallTo,
+      });
+
+      call.on('accept', () => {
+        console.log('Outbound call connected');
+        setActiveCall(prev => prev ? { ...prev, status: 'in-progress' } : null);
+      });
+
+      call.on('disconnect', () => {
+        console.log('Outbound call ended');
+        setActiveCall(null);
+        currentCallRef.current = null;
+        fetchCalls(); // Refresh call history
+      });
+
+      setNewCallTo('');
+      setShowNewCall(false);
+      
+    } catch (error) {
+      console.error('Failed to make call:', error);
+      alert('Failed to make call: ' + error);
+    } finally {
+      setIsDialing(false);
+    }
+  };
+
+  // Keep the existing API call function for non-web calls
+  const makeApiCall = async () => {
     if (!newCallTo.trim()) return;
 
     try {
@@ -92,13 +244,49 @@ export default function CallsPage() {
         setShowNewCall(false);
         await fetchCalls();
         
-        // Could show a success message or call status
         alert(`Call initiated to ${newCallTo}. Call SID: ${data.call.sid}`);
       }
     } catch (error) {
       console.error('Failed to make call:', error);
     } finally {
       setIsDialing(false);
+    }
+  };
+
+  const acceptCall = () => {
+    if (incomingCall) {
+      incomingCall.accept();
+    }
+  };
+
+  const rejectCall = () => {
+    if (incomingCall) {
+      incomingCall.reject();
+    }
+    setIncomingCall(null);
+    setActiveCall(null);
+  };
+
+  const hangUp = () => {
+    if (currentCallRef.current) {
+      currentCallRef.current.disconnect();
+    }
+    if (device) {
+      device.disconnectAll();
+    }
+    setActiveCall(null);
+    setIncomingCall(null);
+    currentCallRef.current = null;
+  };
+
+  const toggleMute = () => {
+    if (currentCallRef.current) {
+      if (isMuted) {
+        currentCallRef.current.mute(false);
+      } else {
+        currentCallRef.current.mute(true);
+      }
+      setIsMuted(!isMuted);
     }
   };
 
@@ -137,6 +325,94 @@ export default function CallsPage() {
 
   return (
     <div className="space-y-6">
+      {/* Voice Status Indicator */}
+      <div className="fixed bottom-4 left-4 z-40">
+        <div className={`px-3 py-2 rounded-lg text-sm font-medium ${
+          isVoiceReady 
+            ? 'bg-green-100 text-green-800' 
+            : voiceError
+            ? 'bg-red-100 text-red-800'
+            : 'bg-yellow-100 text-yellow-800'
+        }`}>
+          {isVoiceReady ? '🟢 Voice Ready' : voiceError ? '🔴 Voice Error' : '🟡 Connecting...'}
+        </div>
+      </div>
+
+      {/* Incoming Call Modal */}
+      {incomingCall && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-2xl p-8 text-center max-w-sm mx-4"
+          >
+            <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Phone className="w-10 h-10 text-green-600" />
+            </div>
+            
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">
+              Incoming Call
+            </h3>
+            <p className="text-gray-600 mb-6">
+              {incomingCall.parameters.From}
+            </p>
+            
+            <div className="flex space-x-4">
+              <button
+                onClick={rejectCall}
+                className="flex-1 bg-red-600 text-white py-3 rounded-xl font-semibold hover:bg-red-700 transition-colors flex items-center justify-center"
+              >
+                <PhoneOff className="w-5 h-5" />
+              </button>
+              <button
+                onClick={acceptCall}
+                className="flex-1 bg-green-600 text-white py-3 rounded-xl font-semibold hover:bg-green-700 transition-colors flex items-center justify-center"
+              >
+                <Phone className="w-5 h-5" />
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Active Call Widget */}
+      {activeCall && activeCall.status !== 'completed' && !incomingCall && (
+        <div className="fixed bottom-4 right-4 bg-white rounded-2xl shadow-xl border border-gray-200 p-6 min-w-72 z-40">
+          <div className="text-center">
+            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <PhoneCall className="w-8 h-8 text-blue-600" />
+            </div>
+            
+            <h3 className="text-lg font-semibold text-gray-900">
+              {activeCall.direction === 'outbound' ? 'Calling' : 'Connected'}
+            </h3>
+            <p className="text-gray-600 mb-4">
+              {activeCall.direction === 'outbound' ? activeCall.to : activeCall.from}
+            </p>
+            
+            <div className="flex space-x-3 justify-center">
+              <button
+                onClick={toggleMute}
+                className={`p-3 rounded-xl transition-colors ${
+                  isMuted 
+                    ? 'bg-red-100 text-red-600' 
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+              </button>
+              
+              <button
+                onClick={hangUp}
+                className="p-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
+              >
+                <PhoneOff className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
@@ -146,7 +422,7 @@ export default function CallsPage() {
       >
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Voice Calls</h1>
-          <p className="text-gray-600 mt-1">Manage your voice communications</p>
+          <p className="text-gray-600 mt-1">Make and manage voice communications</p>
         </div>
         <button
           onClick={() => setShowNewCall(true)}
@@ -157,6 +433,25 @@ export default function CallsPage() {
         </button>
       </motion.div>
 
+      {/* Voice Error */}
+      {voiceError && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-red-50 border border-red-200 rounded-xl p-4"
+        >
+          <div className="flex items-center justify-between">
+            <p className="text-red-600 text-sm">Voice Error: {voiceError}</p>
+            <button 
+              onClick={initializeVoice}
+              className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700"
+            >
+              Retry
+            </button>
+          </div>
+        </motion.div>
+      )}
+
       {/* Filters and Search */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -165,7 +460,6 @@ export default function CallsPage() {
         className="bg-white rounded-2xl border border-gray-100 p-6"
       >
         <div className="flex flex-col lg:flex-row gap-4">
-          {/* Search */}
           <div className="flex-1 relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
             <input
@@ -177,7 +471,6 @@ export default function CallsPage() {
             />
           </div>
 
-          {/* Status Filter */}
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
@@ -191,7 +484,6 @@ export default function CallsPage() {
             <option value="in-progress">In Progress</option>
           </select>
 
-          {/* Direction Filter */}
           <select
             value={filterDirection}
             onChange={(e) => setFilterDirection(e.target.value)}
@@ -231,7 +523,6 @@ export default function CallsPage() {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-4">
-                    {/* Direction Icon */}
                     <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
                       call.direction === 'outbound' 
                         ? 'bg-green-100 text-green-600' 
@@ -244,7 +535,6 @@ export default function CallsPage() {
                       )}
                     </div>
 
-                    {/* Call Details */}
                     <div>
                       <div className="flex items-center space-x-2">
                         <h3 className="font-semibold text-gray-900">
@@ -270,7 +560,6 @@ export default function CallsPage() {
                     </div>
                   </div>
 
-                  {/* Actions */}
                   <div className="flex items-center space-x-2">
                     {call.recordingUrl && (
                       <button className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
@@ -279,7 +568,10 @@ export default function CallsPage() {
                     )}
                     
                     <button 
-                      onClick={() => setNewCallTo(call.direction === 'outbound' ? call.to : call.from)}
+                      onClick={() => {
+                        setNewCallTo(call.direction === 'outbound' ? call.to : call.from);
+                        setShowNewCall(true);
+                      }}
                       className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
                     >
                       <PhoneCall className="w-4 h-4" />
@@ -333,21 +625,44 @@ export default function CallsPage() {
               >
                 Cancel
               </button>
-              <button
-                onClick={makeCall}
-                disabled={!newCallTo.trim() || isDialing}
-                className="flex-1 px-4 py-3 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
-              >
-                {isDialing ? (
-                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <>
-                    <PhoneCall className="w-4 h-4 mr-2" />
-                    Call Now
-                  </>
-                )}
-              </button>
+              
+              {/* Two call options: Web Call (in-browser) and API Call (traditional) */}
+              <div className="flex-1 flex space-x-2">
+                <button
+                  onClick={makeWebCall}
+                  disabled={!newCallTo.trim() || isDialing || !isVoiceReady}
+                  className="flex-1 px-3 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-sm"
+                >
+                  {isDialing ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <Phone className="w-4 h-4 mr-1" />
+                      Web
+                    </>
+                  )}
+                </button>
+                
+                <button
+                  onClick={makeApiCall}
+                  disabled={!newCallTo.trim() || isDialing}
+                  className="flex-1 px-3 py-3 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-sm"
+                >
+                  {isDialing ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <PhoneCall className="w-4 h-4 mr-1" />
+                      API
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
+            
+            <p className="text-xs text-gray-500 mt-2 text-center">
+              Web: In-browser calling • API: Server-side calling
+            </p>
           </motion.div>
         </div>
       )}

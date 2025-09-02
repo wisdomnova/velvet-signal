@@ -10,7 +10,7 @@ const supabase = createClient(
 
 export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData();
+    const formData = await request.formData(); 
     
     const callSid = formData.get('CallSid') as string;
     const from = formData.get('From') as string;

@@ -10,7 +10,7 @@ const supabase = createClient(
 );
 
 export async function GET(request: NextRequest) {
-  try {
+  try { 
     // Verify authentication
     const authHeader = request.headers.get('authorization');
     const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
