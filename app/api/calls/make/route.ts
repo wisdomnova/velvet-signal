@@ -10,7 +10,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-export async function POST(request: NextRequest) { 
+export async function POST(request: NextRequest) {  
   try {
     // Verify authentication
     const authHeader = request.headers.get('authorization');
@@ -31,22 +31,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'To number is required' }, { status: 400 });
     }
 
-    // Get user's phone number to use as 'from' number
-    let fromNumber = from;
-    if (!fromNumber) {
-      const { data: userNumbers, error } = await supabase
-        .from('phone_numbers')
-        .select('phone_number')
-        .eq('user_id', decoded.userId)
-        .limit(1)
-        .single();
-      
-      if (error || !userNumbers) {
-        return NextResponse.json({ error: 'No phone number available to call from' }, { status: 400 });
-      }
-      
-      fromNumber = userNumbers.phone_number;
-    }
+    // Hard-coded from number for testing
+    let fromNumber = '+17034545469';
+    
+    // Get user's phone number to use as 'from' number (commented for testing)
+    // let fromNumber = from;
+    // if (!fromNumber) {
+    //   const { data: userNumbers, error } = await supabase
+    //     .from('phone_numbers')
+    //     .select('phone_number')
+    //     .eq('user_id', decoded.userId)
+    //     .limit(1)
+    //     .single();
+    //   
+    //   if (error || !userNumbers) {
+    //     return NextResponse.json({ error: 'No phone number available to call from' }, { status: 400 });
+    //   }
+    //   
+    //   fromNumber = userNumbers.phone_number;
+    // }
 
     const baseUrl = process.env.NODE_ENV === 'production' 
       ? process.env.NEXT_PUBLIC_APP_URL 
