@@ -4,14 +4,14 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { useAuthStore } from '@/store/auth'; 
+import { useAuthStore } from '@/store/auth';  
 import { 
   Phone, 
   PhoneCall, 
   PhoneIncoming, 
   PhoneOutgoing, 
   Search, 
-  Plus, 
+  Plus,  
   Clock, 
   User,
   Calendar,
@@ -22,7 +22,8 @@ import {
   MoreVertical,
   PhoneOff,
   Volume2,
-  VolumeX
+  VolumeX,
+  AlertTriangle 
 } from 'lucide-react'; 
 
 // Import the Twilio Voice SDK
@@ -67,6 +68,7 @@ export default function CallsPage() {
   const [incomingCall, setIncomingCall] = useState<any>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   
   const currentCallRef = useRef<any>(null);
 
@@ -81,6 +83,21 @@ export default function CallsPage() {
       }
     };
   }, []);
+
+  // Phone number validation
+  const isValidPhoneNumber = (phone: string) => {
+    const phoneRegex = /^\+[1-9]\d{1,14}$/;
+    return phoneRegex.test(phone);
+  };
+
+  // Play recording function
+  const playRecording = (recordingUrl: string) => {
+    const audio = new Audio(recordingUrl);
+    audio.play().catch(error => {
+      console.error('Error playing recording:', error);
+      alert('Failed to play recording');
+    });
+  };
 
   const initializeVoice = async () => {
     try {
@@ -100,13 +117,14 @@ export default function CallsPage() {
       const { token: accessToken } = await response.json();
       
       // Initialize Twilio Device
-      const twilioDevice = new Device(accessToken, {
+      const twilioDevice = new Device(accessToken, { 
         logLevel: 1,
       });
       
       twilioDevice.on('ready', () => {
         console.log('Twilio Device ready');
         setIsVoiceReady(true);
+        setRetryCount(0); // Reset retry count on success
       });
 
       twilioDevice.on('error', (error) => {
@@ -139,6 +157,7 @@ export default function CallsPage() {
           setActiveCall(null);
           setIncomingCall(null);
           currentCallRef.current = null;
+          setIsMuted(false); // Reset mute state
           fetchCalls(); // Refresh call history
         });
 
@@ -156,6 +175,7 @@ export default function CallsPage() {
     } catch (error) {
       console.error('Failed to initialize voice:', error);
       setVoiceError(error instanceof Error ? error.message : 'Failed to initialize voice');
+      setRetryCount(prev => prev + 1);
     }
   };
 
@@ -180,7 +200,7 @@ export default function CallsPage() {
   };
 
   const makeWebCall = async () => {
-    if (!newCallTo.trim() || !device || !isVoiceReady) return;
+    if (!newCallTo.trim() || !device || !isVoiceReady || !isValidPhoneNumber(newCallTo)) return;
 
     try {
       setIsDialing(true);
@@ -207,6 +227,7 @@ export default function CallsPage() {
         console.log('Outbound call ended');
         setActiveCall(null);
         currentCallRef.current = null;
+        setIsMuted(false); // Reset mute state
         fetchCalls(); // Refresh call history
       });
 
@@ -223,7 +244,7 @@ export default function CallsPage() {
 
   // Keep the existing API call function for non-web calls
   const makeApiCall = async () => {
-    if (!newCallTo.trim()) return;
+    if (!newCallTo.trim() || !isValidPhoneNumber(newCallTo)) return;
 
     try {
       setIsDialing(true);
@@ -245,9 +266,13 @@ export default function CallsPage() {
         await fetchCalls();
         
         alert(`Call initiated to ${newCallTo}. Call SID: ${data.call.sid}`);
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to make call');
       }
     } catch (error) {
       console.error('Failed to make call:', error);
+      alert('Failed to make call: ' + (error instanceof Error ? error.message : 'Unknown error'));
     } finally {
       setIsDialing(false);
     }
@@ -277,6 +302,7 @@ export default function CallsPage() {
     setActiveCall(null);
     setIncomingCall(null);
     currentCallRef.current = null;
+    setIsMuted(false);
   };
 
   const toggleMute = () => {
@@ -398,6 +424,7 @@ export default function CallsPage() {
                     ? 'bg-red-100 text-red-600' 
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
+                title={isMuted ? 'Unmute' : 'Mute'}
               >
                 {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
               </button>
@@ -405,6 +432,7 @@ export default function CallsPage() {
               <button
                 onClick={hangUp}
                 className="p-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
+                title="Hang up"
               >
                 <PhoneOff className="w-5 h-5" />
               </button>
@@ -433,20 +461,31 @@ export default function CallsPage() {
         </button>
       </motion.div>
 
-      {/* Voice Error */}
+      {/* Enhanced Voice Error */}
       {voiceError && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           className="bg-red-50 border border-red-200 rounded-xl p-4"
         >
-          <div className="flex items-center justify-between">
-            <p className="text-red-600 text-sm">Voice Error: {voiceError}</p>
+          <div className="flex items-start justify-between">
+            <div className="flex items-start space-x-3">
+              <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5" />
+              <div>
+                <p className="text-red-600 text-sm font-medium">Voice Connection Error</p>
+                <p className="text-red-500 text-xs mt-1">{voiceError}</p>
+                {retryCount > 0 && (
+                  <p className="text-red-400 text-xs mt-1">
+                    Retry attempts: {retryCount}
+                  </p>
+                )}
+              </div>
+            </div>
             <button 
               onClick={initializeVoice}
-              className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700"
+              className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition-colors"
             >
-              Retry
+              Retry Connection
             </button>
           </div>
         </motion.div>
@@ -562,7 +601,11 @@ export default function CallsPage() {
 
                   <div className="flex items-center space-x-2">
                     {call.recordingUrl && (
-                      <button className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
+                      <button 
+                        onClick={() => playRecording(call.recordingUrl!)}
+                        className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+                        title="Play recording"
+                      >
                         <Play className="w-4 h-4" />
                       </button>
                     )}
@@ -573,11 +616,15 @@ export default function CallsPage() {
                         setShowNewCall(true);
                       }}
                       className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+                      title="Call this number"
                     >
                       <PhoneCall className="w-4 h-4" />
                     </button>
                     
-                    <button className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
+                    <button 
+                      className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+                      title="More options"
+                    >
                       <MoreVertical className="w-4 h-4" />
                     </button>
                   </div>
@@ -593,7 +640,7 @@ export default function CallsPage() {
         </div>
       </motion.div>
 
-      {/* New Call Modal */}
+      {/* Enhanced New Call Modal */}
       {showNewCall && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <motion.div
@@ -613,8 +660,17 @@ export default function CallsPage() {
                   placeholder="+1 (555) 123-4567"
                   value={newCallTo}
                   onChange={(e) => setNewCallTo(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-gray-900"
+                  className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-gray-900 ${
+                    newCallTo && !isValidPhoneNumber(newCallTo) 
+                      ? 'border-red-300 bg-red-50' 
+                      : 'border-gray-300'
+                  }`}
                 />
+                {newCallTo && !isValidPhoneNumber(newCallTo) && (
+                  <p className="text-red-500 text-xs mt-1">
+                    Please enter a valid phone number (e.g., +1234567890)
+                  </p>
+                )}
               </div>
             </div>
             
@@ -630,8 +686,9 @@ export default function CallsPage() {
               <div className="flex-1 flex space-x-2">
                 <button
                   onClick={makeWebCall}
-                  disabled={!newCallTo.trim() || isDialing || !isVoiceReady}
+                  disabled={!newCallTo.trim() || !isValidPhoneNumber(newCallTo) || isDialing || !isVoiceReady}
                   className="flex-1 px-3 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-sm"
+                  title="In-browser calling"
                 >
                   {isDialing ? (
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -645,8 +702,9 @@ export default function CallsPage() {
                 
                 <button
                   onClick={makeApiCall}
-                  disabled={!newCallTo.trim() || isDialing}
+                  disabled={!newCallTo.trim() || !isValidPhoneNumber(newCallTo) || isDialing}
                   className="flex-1 px-3 py-3 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-sm"
+                  title="Server-side calling"
                 >
                   {isDialing ? (
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />

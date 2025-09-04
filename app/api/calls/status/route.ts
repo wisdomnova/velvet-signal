@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
     const price = formData.get('Price') as string;
 
     // Update call in database
-    const updateData: any = {
+    const updateData: any = { 
       status: callStatus,
     };
 

@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
 
     // Find the user who owns the 'to' phone number
     const { data: phoneNumber, error } = await supabase
-      .from('phone_numbers')
+      .from('phone_numbers') 
       .select('user_id')
       .eq('phone_number', to)
       .single();

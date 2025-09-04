@@ -17,12 +17,12 @@ export async function GET(request: NextRequest) {
     
     if (!token) {
       return NextResponse.json({ error: 'Authorization token required' }, { status: 401 });
-    }
+    } 
 
     const decoded = verifyToken(token);
     if (!decoded) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
+    } 
 
     // Get calls from database
     const { data: calls, error } = await supabase
