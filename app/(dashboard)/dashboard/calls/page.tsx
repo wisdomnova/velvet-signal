@@ -1,4 +1,3 @@
-// app/(dashboard)/dashboard/calls/page.tsx
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
@@ -324,9 +323,9 @@ export default function CallsPage() {
         closeProtection: true,
       });
       
-      console.log('🎯 Twilio Device created, setting up event handlers...');
+      console.log('🎯 Twilio Device created, registering...');
       
-      // ✅ ENHANCED: Set up all event handlers BEFORE registering
+      // Listen for BOTH ready and registered events
       twilioDevice.on('ready', () => {
         console.log('✅ Twilio Device ready event fired!');
         setIsVoiceReady(true);
@@ -336,6 +335,7 @@ export default function CallsPage() {
 
       twilioDevice.on('registered', () => {
         console.log('📋 Twilio Device registered successfully');
+        // Set voice ready on registered event as well
         setIsVoiceReady(true);
         setRetryCount(0);
         setVoiceError(null);
@@ -361,70 +361,40 @@ export default function CallsPage() {
         setIsVoiceReady(false);
       });
 
-      // ✅ CRITICAL: Enhanced incoming call handler
       twilioDevice.on('incoming', (call) => {
-        console.log('🎯 🎯 🎯 INCOMING CALL DETECTED! 🎯 🎯 🎯');
-        console.log('📞 Call parameters:', {
-          from: call.parameters?.From,
-          to: call.parameters?.To,
-          callSid: call.parameters?.CallSid,
-          allParams: call.parameters
-        });
+        console.log('🎯 Incoming call from Twilio Device:', call.parameters.From);
         
-        // ✅ CRITICAL: Set incoming call state immediately
         setIncomingCall(call);
-        
-        // ✅ CRITICAL: Set active call state for UI display
         setActiveCall({
-          sid: call.parameters?.CallSid || 'incoming',
+          sid: call.parameters.CallSid || '',
           status: 'ringing',
           direction: 'inbound',
-          from: call.parameters?.From || 'Unknown',
-          to: call.parameters?.To || 'Unknown',
+          from: call.parameters.From || '',
+          to: call.parameters.To || '',
         });
 
-        // ✅ ENHANCED: Play browser ringtone (optional)
-        const audio = new Audio('/sounds/ringtone.mp3'); // Add a ringtone file to your public folder
-        audio.loop = true;
-        audio.play().catch(() => console.log('No ringtone file found'));
-
-        // ✅ ENHANCED: Set up call event handlers
         call.on('accept', () => {
-          console.log('✅ Incoming call accepted');
+          console.log('Incoming call accepted');
           setIncomingCall(null);
           currentCallRef.current = call;
           setActiveCall(prev => prev ? { ...prev, status: 'in-progress' } : null);
-          audio.pause(); // Stop ringtone
         });
 
         call.on('disconnect', () => {
-          console.log('📴 Incoming call ended');
+          console.log('Incoming call ended');
           setActiveCall(null);
           setIncomingCall(null);
           currentCallRef.current = null;
           setIsMuted(false);
-          audio.pause(); // Stop ringtone
-          fetchCalls(); // Refresh call history
+          fetchCalls();
         });
 
         call.on('reject', () => {
-          console.log('❌ Incoming call rejected');
+          console.log('Incoming call rejected');
           setActiveCall(null);
           setIncomingCall(null);
           currentCallRef.current = null;
-          audio.pause(); // Stop ringtone
         });
-
-        call.on('error', (error: any) => {
-          console.error('❌ Incoming call error:', error);
-          setActiveCall(null);
-          setIncomingCall(null);
-          currentCallRef.current = null;
-          audio.pause(); // Stop ringtone
-        });
-
-        // ✅ Show browser notification
-        showBrowserNotification('Incoming Call', `Call from ${call.parameters?.From || 'Unknown'}`);
       });
 
       console.log('🚀 Starting device registration...');
@@ -591,27 +561,21 @@ export default function CallsPage() {
     }
   };
 
-  // ✅ ENHANCED: Accept incoming call function
-  const acceptIncomingCall = () => {
+  const acceptCall = () => {
     if (incomingCall) {
-      console.log('✅ Accepting incoming call');
+      console.log('📞 Accepting incoming call');
       incomingCall.accept();
-      // State will be updated by the call event handlers
     }
   };
 
-  // ✅ ENHANCED: Reject incoming call function
-  const rejectIncomingCall = () => {
+  const rejectCall = () => {
     if (incomingCall) {
       console.log('❌ Rejecting incoming call');
       incomingCall.reject();
-      // State will be updated by the call event handlers
     }
+    setIncomingCall(null);
+    setActiveCall(null);
   };
-
-  // Legacy function names for backward compatibility
-  const acceptCall = acceptIncomingCall;
-  const rejectCall = rejectIncomingCall;
 
   const hangUp = () => {
     console.log('📴 Hanging up call');
@@ -759,99 +723,74 @@ export default function CallsPage() {
         </motion.div>
       )}
 
-      {/* ✅ ENHANCED: Incoming Call Modal */}
+      {/* Incoming Call Modal */}
       {incomingCall && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <motion.div
-            initial={{ opacity: 0, scale: 0.8 }}
+            initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-3xl p-8 text-center max-w-sm mx-4 shadow-2xl"
+            className="bg-white rounded-2xl p-8 text-center max-w-sm mx-4"
           >
-            {/* ✅ Animated ringing indicator */}
-            <motion.div
-              animate={{ scale: [1, 1.1, 1] }}
-              transition={{ duration: 1, repeat: Infinity }}
-              className="w-24 h-24 bg-gradient-to-br from-green-400 to-green-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg"
-            >
-              <Phone className="w-12 h-12 text-white" />
-            </motion.div>
+            <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Phone className="w-10 h-10 text-green-600" />
+            </div>
             
-            <h3 className="text-2xl font-bold text-gray-900 mb-2">
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">
               Incoming Call
             </h3>
-            <p className="text-lg text-gray-600 mb-2">
-              {incomingCall.parameters?.From || 'Unknown Number'}
-            </p>
-            <p className="text-sm text-gray-500 mb-8">
-              To: {incomingCall.parameters?.To || 'Unknown'}
+            <p className="text-gray-600 mb-6">
+              {incomingCall.parameters.From}
             </p>
             
             <div className="flex space-x-4">
               <button
-                onClick={rejectIncomingCall}
-                className="flex-1 bg-red-500 text-white py-4 px-6 rounded-2xl font-semibold hover:bg-red-600 transition-colors flex items-center justify-center shadow-lg"
+                onClick={rejectCall}
+                className="flex-1 bg-red-600 text-white py-3 rounded-xl font-semibold hover:bg-red-700 transition-colors flex items-center justify-center"
               >
-                <PhoneOff className="w-6 h-6" />
+                <PhoneOff className="w-5 h-5" />
               </button>
               <button
-                onClick={acceptIncomingCall}
-                className="flex-1 bg-green-500 text-white py-4 px-6 rounded-2xl font-semibold hover:bg-green-600 transition-colors flex items-center justify-center shadow-lg"
+                onClick={acceptCall}
+                className="flex-1 bg-green-600 text-white py-3 rounded-xl font-semibold hover:bg-green-700 transition-colors flex items-center justify-center"
               >
-                <Phone className="w-6 h-6" />
+                <Phone className="w-5 h-5" />
               </button>
             </div>
-            
-            <p className="text-xs text-gray-400 mt-4">
-              Call SID: {incomingCall.parameters?.CallSid?.slice(-8) || 'Unknown'}
-            </p>
           </motion.div>
         </div>
       )}
 
-      {/* ✅ ENHANCED: Active Call Widget */}
+      {/* Active Call Widget */}
       {activeCall && activeCall.status !== 'completed' && !incomingCall && (
-        <div className="fixed bottom-4 right-4 bg-white rounded-2xl shadow-xl border border-gray-200 p-6 min-w-80 z-40">
+        <div className="fixed bottom-4 right-4 bg-white rounded-2xl shadow-xl border border-gray-200 p-6 min-w-72 z-40">
           <div className="text-center">
-            <motion.div
-              animate={activeCall.status === 'in-progress' ? {} : { scale: [1, 1.05, 1] }}
-              transition={{ duration: 1.5, repeat: Infinity }}
-              className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4"
-            >
+            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <PhoneCall className="w-8 h-8 text-blue-600" />
-            </motion.div>
+            </div>
             
             <h3 className="text-lg font-semibold text-gray-900">
-              {activeCall.status === 'connecting' ? 'Connecting...' :
-               activeCall.status === 'ringing' ? 'Ringing...' :
-               activeCall.status === 'in-progress' ? 'Call in Progress' :
-               activeCall.direction === 'outbound' ? 'Calling' : 'Connected'}
+              {activeCall.direction === 'outbound' ? 'Calling' : 'Connected'}
             </h3>
             <p className="text-gray-600 mb-4">
               {activeCall.direction === 'outbound' ? activeCall.to : activeCall.from}
             </p>
-            <p className="text-sm text-gray-500 mb-4">
-              {activeCall.direction === 'outbound' ? `From: ${activeCall.from}` : `To: ${activeCall.to}`}
-            </p>
             
             <div className="flex space-x-3 justify-center">
-              {/* Only show mute button when call is in progress */}
-              {activeCall.status === 'in-progress' && (
-                <button
-                  onClick={toggleMute}
-                  className={`p-3 rounded-xl transition-colors ${
-                    isMuted 
-                      ? 'bg-red-100 text-red-600' 
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                  title={isMuted ? 'Unmute' : 'Mute'}
-                >
-                  {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-                </button>
-              )}
+              <button
+                onClick={toggleMute}
+                className={`p-3 rounded-xl transition-colors ${
+                  isMuted 
+                    ? 'bg-red-100 text-red-600' 
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+                title={isMuted ? 'Unmute' : 'Mute'}
+              >
+                {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+              </button>
               
               <button
                 onClick={hangUp}
-                className="p-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors shadow-lg"
+                className="p-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
                 title="Hang up"
               >
                 <PhoneOff className="w-5 h-5" />
