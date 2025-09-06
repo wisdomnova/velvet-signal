@@ -4,7 +4,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { useAuthStore } from '@/store/auth';  
+import { useAuthStore } from '@/store/auth';
+import { createClient } from '@supabase/supabase-js'; // Add this import
 import { 
   Phone, 
   PhoneCall, 
@@ -23,11 +24,19 @@ import {
   PhoneOff,
   Volume2,
   VolumeX,
-  AlertTriangle 
+  AlertTriangle,
+  Bell, // Add this for notifications
+  ChevronDown // Add this for dropdown
 } from 'lucide-react'; 
 
 // Import the Twilio Voice SDK
 import { Device } from '@twilio/voice-sdk';
+
+// Add Supabase client for realtime
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 interface Call {
   id: string;
@@ -50,6 +59,15 @@ interface LiveCall {
   to: string;
 }
 
+interface UserNumber {
+  id: string;
+  phoneNumber: string;
+  capabilities: {
+    voice: boolean;
+    sms: boolean;
+  };
+}
+
 export default function CallsPage() {
   const { token } = useAuthStore();
   const [calls, setCalls] = useState<Call[]>([]);
@@ -61,6 +79,10 @@ export default function CallsPage() {
   const [newCallTo, setNewCallTo] = useState('');
   const [isDialing, setIsDialing] = useState(false);
   
+  // Number selection states
+  const [userNumbers, setUserNumbers] = useState<UserNumber[]>([]);
+  const [selectedFromNumber, setSelectedFromNumber] = useState<string>('');
+  
   // Voice SDK states
   const [device, setDevice] = useState<Device | null>(null);
   const [isVoiceReady, setIsVoiceReady] = useState(false);
@@ -70,18 +92,142 @@ export default function CallsPage() {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   
+  // Real-time notification states
+  const [newCallNotification, setNewCallNotification] = useState<Call | null>(null);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
+  
   const currentCallRef = useRef<any>(null);
 
   useEffect(() => {
     fetchCalls();
+    fetchUserNumbers();
     initializeVoice();
+    setupRealtimeSubscriptions();
     
     return () => {
       if (device) {
         device.disconnectAll();
         device.unregister();
       }
+      // Cleanup subscriptions
+      supabase.removeAllChannels();
     };
+  }, []);
+
+  const fetchUserNumbers = async () => {
+    try {
+      const response = await fetch('/api/numbers/owned', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const voiceCapableNumbers = data.numbers.filter((num: any) => num.capabilities?.voice);
+        setUserNumbers(voiceCapableNumbers.map((num: any) => ({
+          id: num.sid,
+          phoneNumber: num.phoneNumber,
+          capabilities: num.capabilities
+        })));
+        
+        // Set first voice-capable number as default
+        if (voiceCapableNumbers.length > 0 && !selectedFromNumber) {
+          setSelectedFromNumber(voiceCapableNumbers[0].phoneNumber);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch user numbers:', error);
+    }
+  };
+
+  // Setup real-time subscriptions for incoming calls and messages
+  const setupRealtimeSubscriptions = async () => {
+    try {
+      // Get user ID from token
+      const response = await fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (!response.ok) return;
+      
+      const { user } = await response.json();
+      const userId = user.id;
+
+      // Real-time subscription for calls
+      const callsChannel = supabase
+        .channel('user_calls')
+        .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'calls',
+          filter: `user_id=eq.${userId}`
+        }, (payload) => {
+          console.log('🔥 Real-time call received!', payload);
+          
+          const newCall = payload.new as any;
+          
+          // Add to calls list immediately
+          setCalls(prev => [newCall, ...prev]);
+          
+          // Show notification for incoming calls
+          if (newCall.direction === 'inbound' && newCall.status === 'ringing') {
+            setNewCallNotification(newCall);
+            showBrowserNotification('Incoming Call', `Call from ${newCall.from_number}`);
+            
+            // Auto-hide notification after 10 seconds
+            setTimeout(() => setNewCallNotification(null), 10000);
+          }
+        })
+        .on('postgres_changes', {
+          event: 'UPDATE', 
+          schema: 'public',
+          table: 'calls',
+          filter: `user_id=eq.${userId}`
+        }, (payload) => {
+          console.log('📞 Call status updated!', payload);
+          
+          // Update call in the list
+          setCalls(prev => prev.map(call => 
+            call.sid === payload.new.sid 
+              ? { ...call, ...payload.new }
+              : call
+          ));
+        })
+        .subscribe((status) => {
+          console.log('Calls subscription status:', status);
+          setIsRealtimeConnected(status === 'SUBSCRIBED');
+        });
+
+      console.log('✅ Real-time subscriptions setup complete');
+      
+    } catch (error) {
+      console.error('❌ Failed to setup real-time subscriptions:', error);
+    }
+  };
+
+  // Browser notification function
+  const showBrowserNotification = (title: string, body: string) => {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(title, {
+        body,
+        icon: '/favicon.ico',
+        badge: '/favicon.ico'
+      });
+    } else if ('Notification' in window && Notification.permission !== 'denied') {
+      Notification.requestPermission().then(permission => {
+        if (permission === 'granted') {
+          new Notification(title, { body, icon: '/favicon.ico' });
+        }
+      });
+    }
+  };
+
+  // Request notification permission on component mount
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
   }, []);
 
   // Phone number validation
@@ -115,7 +261,7 @@ export default function CallsPage() {
       }
 
       const { token: accessToken } = await response.json();
-      
+       
       // Initialize Twilio Device
       const twilioDevice = new Device(accessToken, { 
         logLevel: 1,
@@ -124,7 +270,7 @@ export default function CallsPage() {
       twilioDevice.on('ready', () => {
         console.log('Twilio Device ready');
         setIsVoiceReady(true);
-        setRetryCount(0); // Reset retry count on success
+        setRetryCount(0);
       });
 
       twilioDevice.on('error', (error) => {
@@ -134,7 +280,7 @@ export default function CallsPage() {
       });
 
       twilioDevice.on('incoming', (call) => {
-        console.log('Incoming call from:', call.parameters.From);
+        console.log('🎯 Incoming call from Twilio Device:', call.parameters.From);
         
         setIncomingCall(call);
         setActiveCall({
@@ -157,8 +303,8 @@ export default function CallsPage() {
           setActiveCall(null);
           setIncomingCall(null);
           currentCallRef.current = null;
-          setIsMuted(false); // Reset mute state
-          fetchCalls(); // Refresh call history
+          setIsMuted(false);
+          fetchCalls();
         });
 
         call.on('reject', () => {
@@ -227,8 +373,8 @@ export default function CallsPage() {
         console.log('Outbound call ended');
         setActiveCall(null);
         currentCallRef.current = null;
-        setIsMuted(false); // Reset mute state
-        fetchCalls(); // Refresh call history
+        setIsMuted(false);
+        fetchCalls();
       });
 
       setNewCallTo('');
@@ -242,9 +388,13 @@ export default function CallsPage() {
     }
   };
 
-  // Keep the existing API call function for non-web calls
   const makeApiCall = async () => {
     if (!newCallTo.trim() || !isValidPhoneNumber(newCallTo)) return;
+
+    if (!selectedFromNumber) {
+      alert('Please select a phone number to call from');
+      return;
+    }
 
     try {
       setIsDialing(true);
@@ -256,6 +406,7 @@ export default function CallsPage() {
         },
         body: JSON.stringify({
           to: newCallTo,
+          from: selectedFromNumber,
         }),
       });
 
@@ -265,7 +416,7 @@ export default function CallsPage() {
         setShowNewCall(false);
         await fetchCalls();
         
-        alert(`Call initiated to ${newCallTo}. Call SID: ${data.call.sid}`);
+        alert(`Call initiated to ${newCallTo} from ${selectedFromNumber}. Call SID: ${data.call.sid}`);
       } else {
         const errorData = await response.json();
         throw new Error(errorData.error || 'Failed to make call');
@@ -351,8 +502,9 @@ export default function CallsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Voice Status Indicator */}
-      <div className="fixed bottom-4 left-4 z-40">
+      {/* Real-time Status Indicators */}
+      <div className="fixed bottom-4 left-4 z-40 space-y-2">
+        {/* Voice Status */}
         <div className={`px-3 py-2 rounded-lg text-sm font-medium ${
           isVoiceReady 
             ? 'bg-green-100 text-green-800' 
@@ -362,7 +514,45 @@ export default function CallsPage() {
         }`}>
           {isVoiceReady ? '🟢 Voice Ready' : voiceError ? '🔴 Voice Error' : '🟡 Connecting...'}
         </div>
+        
+        {/* Real-time Status */}
+        <div className={`px-3 py-2 rounded-lg text-sm font-medium ${
+          isRealtimeConnected 
+            ? 'bg-blue-100 text-blue-800' 
+            : 'bg-gray-100 text-gray-800'
+        }`}>
+          {isRealtimeConnected ? '🔄 Real-time Connected' : '⏸️ Real-time Offline'}
+        </div>
       </div>
+
+      {/* Real-time Call Notification */}
+      {newCallNotification && (
+        <motion.div
+          initial={{ opacity: 0, y: -50 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -50 }}
+          className="fixed top-4 right-4 z-50 bg-white rounded-xl shadow-lg border border-gray-200 p-4 min-w-80"
+        >
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+              <Bell className="w-5 h-5 text-blue-600" />
+            </div>
+            <div className="flex-1">
+              <h4 className="font-semibold text-gray-900">Incoming Call</h4>
+              <p className="text-sm text-gray-600">From: {newCallNotification.from}</p>
+              <p className="text-xs text-gray-500">
+                {new Date(newCallNotification.dateCreated).toLocaleTimeString()}
+              </p>
+            </div>
+            <button 
+              onClick={() => setNewCallNotification(null)}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              ✕
+            </button>
+          </div>
+        </motion.div>
+      )}
 
       {/* Incoming Call Modal */}
       {incomingCall && (
@@ -640,7 +830,7 @@ export default function CallsPage() {
         </div>
       </motion.div>
 
-      {/* Enhanced New Call Modal */}
+      {/* Enhanced New Call Modal with Phone Number Selection */}
       {showNewCall && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <motion.div
@@ -651,9 +841,34 @@ export default function CallsPage() {
             <h3 className="text-xl font-semibold text-gray-900 mb-6">Make a Call</h3>
             
             <div className="space-y-4">
+              {/* From Number Selector */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Phone Number
+                  Call From
+                </label>
+                <select
+                  value={selectedFromNumber}
+                  onChange={(e) => setSelectedFromNumber(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-gray-900 bg-white"
+                >
+                  <option value="">Select a number to call from</option>
+                  {userNumbers.filter(num => num.capabilities?.voice).map((number) => (
+                    <option key={number.id} value={number.phoneNumber}>
+                      {number.phoneNumber}
+                    </option>
+                  ))}
+                </select>
+                {userNumbers.filter(num => num.capabilities?.voice).length === 0 && (
+                  <p className="text-red-500 text-xs mt-1">
+                    No voice-capable numbers found. Please purchase a phone number first.
+                  </p>
+                )}
+              </div>
+
+              {/* To Number Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Call To
                 </label>
                 <input
                   type="tel"
@@ -682,7 +897,6 @@ export default function CallsPage() {
                 Cancel
               </button>
               
-              {/* Two call options: Web Call (in-browser) and API Call (traditional) */}
               <div className="flex-1 flex space-x-2">
                 <button
                   onClick={makeWebCall}
@@ -702,7 +916,7 @@ export default function CallsPage() {
                 
                 <button
                   onClick={makeApiCall}
-                  disabled={!newCallTo.trim() || !isValidPhoneNumber(newCallTo) || isDialing}
+                  disabled={!newCallTo.trim() || !selectedFromNumber || !isValidPhoneNumber(newCallTo) || isDialing}
                   className="flex-1 px-3 py-3 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-sm"
                   title="Server-side calling"
                 >

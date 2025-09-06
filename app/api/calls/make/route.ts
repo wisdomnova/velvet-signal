@@ -31,36 +31,52 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'To number is required' }, { status: 400 });
     }
 
-    // Hard-coded from number for testing
-    let fromNumber = '+17034545469';
-    
-    // Get user's phone number to use as 'from' number (commented for testing)
-    // let fromNumber = from;
-    // if (!fromNumber) {
-    //   const { data: userNumbers, error } = await supabase
-    //     .from('phone_numbers')
-    //     .select('phone_number')
-    //     .eq('user_id', decoded.userId)
-    //     .limit(1)
-    //     .single();
-    //   
-    //   if (error || !userNumbers) {
-    //     return NextResponse.json({ error: 'No phone number available to call from' }, { status: 400 });
-    //   }
-    //   
-    //   fromNumber = userNumbers.phone_number;
-    // }
+    // Get user's phone number to use as 'from' number
+    let fromNumber = from;
+    if (!fromNumber) {
+      const { data: userNumbers, error } = await supabase
+        .from('phone_numbers')
+        .select('phone_number')
+        .eq('user_id', decoded.userId)
+        .order('date_created', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (error || !userNumbers) {
+        return NextResponse.json({ 
+          error: 'No phone number available to call from. Please purchase a phone number first.' 
+        }, { status: 400 });
+      }
+      
+      fromNumber = userNumbers.phone_number;
+    }
+
+    // Validate that the from number belongs to the user
+    if (from) {
+      const { data: numberOwnership, error } = await supabase
+        .from('phone_numbers')
+        .select('phone_number')
+        .eq('user_id', decoded.userId)
+        .eq('phone_number', from)
+        .single();
+
+      if (error || !numberOwnership) {
+        return NextResponse.json({ 
+          error: 'You can only call from phone numbers you own.' 
+        }, { status: 403 });
+      }
+    }
 
     const baseUrl = process.env.NODE_ENV === 'production' 
-      ? process.env.NEXT_PUBLIC_APP_URL 
-      : process.env.NGROK_URL || process.env.NEXT_PUBLIC_APP_URL;
+      ? (process.env.NEXT_PUBLIC_APP_URL || 'https://velvet-signal.vercel.app')
+      : (process.env.NGROK_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001');
 
     // Make call via Twilio
     const call = await twilioClient.calls.create({
       to,
       from: fromNumber,
-      url: baseUrl ? `${baseUrl}/api/voice/webhook` : undefined,
-      statusCallback: baseUrl ? `${baseUrl}/api/calls/status` : undefined,
+      url: `${baseUrl}/api/voice/webhook`,
+      statusCallback: `${baseUrl}/api/calls/status`,
       statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
       record: true, // Enable call recording
     });
@@ -100,7 +116,10 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error in make call API:', error);
     return NextResponse.json(
-      { error: 'Failed to make call' },
+      { 
+        error: 'Failed to make call',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
       { status: 500 }
     );
   }

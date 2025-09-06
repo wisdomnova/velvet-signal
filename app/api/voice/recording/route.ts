@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
 
     return new NextResponse(twiml, {
       status: 200,
-      headers: { 'Content-Type': 'text/xml' },
+      headers: { 'Content-Type': 'text/xml' }, 
     });
  
   } catch (error) {

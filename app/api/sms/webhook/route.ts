@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
     const to = formData.get('To') as string;
     const body = formData.get('Body') as string;
     const messageStatus = formData.get('SmsStatus') as string;
-
+ 
     // Find the user who owns the 'to' phone number
     const { data: phoneNumber, error } = await supabase
       .from('phone_numbers')

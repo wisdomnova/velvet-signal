@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Authorization token required' }, { status: 401 });
     }
 
-    const decoded = verifyToken(token);
+    const decoded = verifyToken(token); 
     if (!decoded) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
@@ -38,14 +38,33 @@ export async function POST(request: NextRequest) {
         .from('phone_numbers')
         .select('phone_number')
         .eq('user_id', decoded.userId)
+        .order('date_created', { ascending: false })
         .limit(1)
         .single();
       
       if (error || !userNumbers) {
-        return NextResponse.json({ error: 'No phone number available to send from' }, { status: 400 });
+        return NextResponse.json({ 
+          error: 'No phone number available to send from. Please purchase a phone number first.' 
+        }, { status: 400 });
       }
       
       fromNumber = userNumbers.phone_number;
+    }
+
+    // Validate that the from number belongs to the user
+    if (from) {
+      const { data: numberOwnership, error } = await supabase
+        .from('phone_numbers')
+        .select('phone_number')
+        .eq('user_id', decoded.userId)
+        .eq('phone_number', from)
+        .single();
+
+      if (error || !numberOwnership) {
+        return NextResponse.json({ 
+          error: 'You can only send SMS from phone numbers you own.' 
+        }, { status: 403 });
+      }
     }
 
     // Send SMS via Twilio
@@ -92,7 +111,10 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error in send SMS API:', error);
     return NextResponse.json(
-      { error: 'Failed to send message' },
+      { 
+        error: 'Failed to send message',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
       { status: 500 }
     );
   }

@@ -12,10 +12,12 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData(); 
     
-    const callSid = formData.get('CallSid') as string;
+    const callSid = formData.get('CallSid') as string; 
     const from = formData.get('From') as string;
     const to = formData.get('To') as string;
     const callStatus = formData.get('CallStatus') as string;
+
+    console.log('🎯 Voice webhook called:', { callSid, from, to, callStatus });
 
     // Find the user who owns the 'to' phone number
     const { data: phoneNumber, error } = await supabase
@@ -29,7 +31,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Phone number not found' }, { status: 404 });
     }
 
-    // Save incoming call to database
+    // Save incoming call to database (this will trigger real-time notification)
     const { error: insertError } = await supabase
       .from('calls')
       .insert({
@@ -44,12 +46,17 @@ export async function POST(request: NextRequest) {
 
     if (insertError) {
       console.error('Error saving incoming call:', insertError);
+    } else {
+      console.log('✅ Incoming call saved - Real-time notification should fire!');
     }
 
-    // TwiML response for handling the call
+    // TwiML response - choice between browser calling or voicemail
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>
-      <Say voice="alice">Thank you for calling. This number is managed by Velvet Signal. Please leave a message after the tone.</Say>
+      <Dial timeout="20" action="/api/voice/dial-status">
+        <Client>user_${phoneNumber.user_id}</Client>
+      </Dial>
+      <Say voice="alice">Sorry, the person you're calling is not available. Please leave a message after the tone.</Say>
       <Record action="/api/voice/recording" timeout="30" playBeep="true" />
       <Say voice="alice">Thank you for your message. Goodbye.</Say>
     </Response>`;
@@ -68,4 +75,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+} 

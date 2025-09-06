@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useAuthStore } from '@/store/auth';
+import { createClient } from '@supabase/supabase-js'; // Add this import
 import { 
   MessageSquare, 
   Send,  
@@ -15,8 +16,16 @@ import {
   Calendar,
   User,
   Filter, 
-  MoreVertical
+  MoreVertical,
+  Bell, // Add this for notifications
+  ChevronDown // Add this for dropdowns
 } from 'lucide-react';
+
+// Add Supabase client for realtime
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 interface Message {
   id: string;
@@ -38,6 +47,14 @@ interface Conversation {
   messages: Message[];
 }
 
+interface UserNumber {
+  id: string;
+  phoneNumber: string;
+  capabilities: {
+    sms: boolean;
+  };
+}
+
 export default function MessagesPage() {
   const { token } = useAuthStore();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -48,10 +65,127 @@ export default function MessagesPage() {
   const [isSending, setIsSending] = useState(false);
   const [showNewMessage, setShowNewMessage] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Number selection states
+  const [userNumbers, setUserNumbers] = useState<UserNumber[]>([]);
+  const [selectedFromNumber, setSelectedFromNumber] = useState<string>('');
+  const [showFromDropdown, setShowFromDropdown] = useState(false);
+  
+  // Real-time notification states
+  const [newMessageNotification, setNewMessageNotification] = useState<Message | null>(null);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
 
   useEffect(() => {
     fetchConversations();
+    fetchUserNumbers();
+    setupRealtimeSubscriptions();
+    
+    return () => {
+      // Cleanup subscriptions
+      supabase.removeAllChannels();
+    };
   }, []);
+
+  // Setup real-time subscriptions for incoming messages
+  const setupRealtimeSubscriptions = async () => {
+    try {
+      // Get user ID from token
+      const response = await fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (!response.ok) return;
+      
+      const { user } = await response.json();
+      const userId = user.id;
+
+      // Real-time subscription for messages
+      const messagesChannel = supabase
+        .channel('user_messages')
+        .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `user_id=eq.${userId}`
+        }, (payload) => {
+          console.log('🔥 Real-time message received!', payload);
+          
+          const newMessage = payload.new as any;
+          
+          // Refresh conversations to include new message
+          fetchConversations();
+          
+          // Show notification for incoming messages
+          if (newMessage.direction === 'inbound') {
+            setNewMessageNotification(newMessage);
+            showBrowserNotification('New Message', `From ${newMessage.from_number}: ${newMessage.body}`);
+            
+            // Auto-hide notification after 10 seconds
+            setTimeout(() => setNewMessageNotification(null), 10000);
+          }
+        })
+        .subscribe((status) => {
+          console.log('Messages subscription status:', status);
+          setIsRealtimeConnected(status === 'SUBSCRIBED');
+        });
+
+      console.log('✅ Real-time SMS subscriptions setup complete');
+      
+    } catch (error) {
+      console.error('❌ Failed to setup real-time subscriptions:', error);
+    }
+  };
+
+  // Browser notification function
+  const showBrowserNotification = (title: string, body: string) => {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(title, {
+        body,
+        icon: '/favicon.ico',
+        badge: '/favicon.ico'
+      });
+    } else if ('Notification' in window && Notification.permission !== 'denied') {
+      Notification.requestPermission().then(permission => {
+        if (permission === 'granted') {
+          new Notification(title, { body, icon: '/favicon.ico' });
+        }
+      });
+    }
+  };
+
+  // Request notification permission on component mount
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  const fetchUserNumbers = async () => {
+    try {
+      const response = await fetch('/api/numbers/owned', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const smsCapableNumbers = data.numbers.filter((num: any) => num.capabilities?.sms);
+        setUserNumbers(smsCapableNumbers.map((num: any) => ({
+          id: num.sid,
+          phoneNumber: num.phoneNumber,
+          capabilities: num.capabilities
+        })));
+        
+        // Set first SMS-capable number as default
+        if (smsCapableNumbers.length > 0 && !selectedFromNumber) {
+          setSelectedFromNumber(smsCapableNumbers[0].phoneNumber);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch user numbers:', error);
+    }
+  };
 
   const fetchConversations = async () => {
     try {
@@ -79,6 +213,11 @@ export default function MessagesPage() {
     const to = selectedConversation || newMessageTo;
     if (!to) return;
 
+    if (!selectedFromNumber) {
+      alert('Please select a phone number to send from');
+      return;
+    }
+
     try {
       setIsSending(true);
       const response = await fetch('/api/sms/send', {
@@ -90,6 +229,7 @@ export default function MessagesPage() {
         body: JSON.stringify({
           to,
           body: newMessage,
+          from: selectedFromNumber,
         }),
       });
 
@@ -98,9 +238,13 @@ export default function MessagesPage() {
         setNewMessageTo('');
         setShowNewMessage(false);
         await fetchConversations();
+      } else {
+        const errorData = await response.json();
+        alert('Failed to send message: ' + (errorData.error || 'Unknown error'));
       }
     } catch (error) {
       console.error('Failed to send message:', error);
+      alert('Failed to send message');
     } finally {
       setIsSending(false);
     }
@@ -116,6 +260,47 @@ export default function MessagesPage() {
 
   return (
     <div className="h-[calc(100vh-8rem)] flex gap-6">
+      {/* Real-time Status Indicator */}
+      <div className="fixed bottom-4 left-4 z-40">
+        <div className={`px-3 py-2 rounded-lg text-sm font-medium ${
+          isRealtimeConnected 
+            ? 'bg-blue-100 text-blue-800' 
+            : 'bg-gray-100 text-gray-800'
+        }`}>
+          {isRealtimeConnected ? '🔄 Real-time Connected' : '⏸️ Real-time Offline'}
+        </div>
+      </div>
+
+      {/* Real-time Message Notification */}
+      {newMessageNotification && (
+        <motion.div
+          initial={{ opacity: 0, y: -50 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -50 }}
+          className="fixed top-4 right-4 z-50 bg-white rounded-xl shadow-lg border border-gray-200 p-4 min-w-80"
+        >
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+              <Bell className="w-5 h-5 text-green-600" />
+            </div>
+            <div className="flex-1">
+              <h4 className="font-semibold text-gray-900">New Message</h4>
+              <p className="text-sm text-gray-600">From: {newMessageNotification.from}</p>
+              <p className="text-sm text-gray-800 mt-1">{newMessageNotification.body}</p>
+              <p className="text-xs text-gray-500 mt-1">
+                {new Date(newMessageNotification.dateCreated).toLocaleTimeString()}
+              </p>
+            </div>
+            <button 
+              onClick={() => setNewMessageNotification(null)}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              ✕
+            </button>
+          </div>
+        </motion.div>
+      )}
+
       {/* Conversations List */}
       <motion.div
         initial={{ opacity: 0, x: -20 }}
@@ -283,6 +468,44 @@ export default function MessagesPage() {
 
             {/* Message Input */}
             <div className="p-6 border-t border-gray-100">
+              {/* From Number Selector */}
+              <div className="mb-4">
+                <div className="relative">
+                  <button
+                    onClick={() => setShowFromDropdown(!showFromDropdown)}
+                    className="flex items-center justify-between w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
+                  >
+                    <span className="text-gray-700">
+                      From: {selectedFromNumber || 'Select number'}
+                    </span>
+                    <ChevronDown className="w-4 h-4 text-gray-500" />
+                  </button>
+                  
+                  {showFromDropdown && (
+                    <div className="absolute bottom-full mb-2 w-full bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                      {userNumbers.length > 0 ? (
+                        userNumbers.map((number) => (
+                          <button
+                            key={number.id}
+                            onClick={() => {
+                              setSelectedFromNumber(number.phoneNumber);
+                              setShowFromDropdown(false);
+                            }}
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 transition-colors"
+                          >
+                            {number.phoneNumber}
+                          </button>
+                        ))
+                      ) : (
+                        <div className="px-3 py-2 text-sm text-gray-500">
+                          No SMS-capable numbers found
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="flex items-center space-x-4">
                 <input
                   type="text"
@@ -294,7 +517,7 @@ export default function MessagesPage() {
                 />
                 <button
                   onClick={sendMessage}
-                  disabled={!newMessage.trim() || isSending}
+                  disabled={!newMessage.trim() || !selectedFromNumber || isSending}
                   className="p-3 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isSending ? (
@@ -312,6 +535,23 @@ export default function MessagesPage() {
             <div className="w-full max-w-md">
               <h3 className="text-xl font-semibold text-gray-900 mb-6 text-center">New Message</h3>
               <div className="space-y-4">
+                {/* From Number Selector */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">From</label>
+                  <select
+                    value={selectedFromNumber}
+                    onChange={(e) => setSelectedFromNumber(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-gray-900 bg-white"
+                  >
+                    <option value="">Select a number to send from</option>
+                    {userNumbers.map((number) => (
+                      <option key={number.id} value={number.phoneNumber}>
+                        {number.phoneNumber}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">To</label>
                   <input
@@ -341,7 +581,7 @@ export default function MessagesPage() {
                   </button>
                   <button
                     onClick={sendMessage}
-                    disabled={!newMessage.trim() || !newMessageTo.trim() || isSending}
+                    disabled={!newMessage.trim() || !newMessageTo.trim() || !selectedFromNumber || isSending}
                     className="flex-1 px-4 py-3 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                   >
                     {isSending ? (

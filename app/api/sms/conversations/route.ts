@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     const authHeader = request.headers.get('authorization');
     const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
     
-    if (!token) {
+    if (!token) { 
       return NextResponse.json({ error: 'Authorization token required' }, { status: 401 });
     }
 
