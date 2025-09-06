@@ -523,7 +523,7 @@ export default function NumbersPage() {
                               <Plus className="w-4 h-4 mr-2" />
                               Purchase
                             </>
-                          )}
+                          )} 
                         </button> 
                       </div>
                     </motion.div>

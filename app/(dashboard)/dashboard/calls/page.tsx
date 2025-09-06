@@ -461,12 +461,21 @@ export default function CallsPage() {
   const makeWebCall = async () => {
     if (!newCallTo.trim() || !device || !isVoiceReady || !isValidPhoneNumber(newCallTo)) return;
 
+    // Check if user has selected a number to call from
+    if (!selectedFromNumber) {
+      alert('Please select a phone number to call from');
+      return;
+    }
+
     try {
       setIsDialing(true);
-      console.log('🔄 Starting web call to:', newCallTo);
+      console.log('🔄 Starting web call to:', newCallTo, 'from:', selectedFromNumber);
       
       const call = await device.connect({
-        params: { To: newCallTo }
+        params: { 
+          To: newCallTo,
+          CallerId: selectedFromNumber  // Pass the selected caller ID
+        }
       });
       
       console.log('📞 Web call initiated:', call);
@@ -476,7 +485,7 @@ export default function CallsPage() {
         sid: '',
         status: 'connecting',
         direction: 'outbound',
-        from: '',
+        from: selectedFromNumber,  // Show the selected number
         to: newCallTo,
       });
 
@@ -1063,7 +1072,7 @@ export default function CallsPage() {
               <div className="flex-1 flex space-x-2">
                 <button
                   onClick={makeWebCall}
-                  disabled={!newCallTo.trim() || !isValidPhoneNumber(newCallTo) || isDialing || !isVoiceReady}
+                  disabled={!newCallTo.trim() || !selectedFromNumber || !isValidPhoneNumber(newCallTo) || isDialing || !isVoiceReady}
                   className="flex-1 px-3 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-sm"
                   title="In-browser calling"
                 >

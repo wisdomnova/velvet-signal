@@ -16,17 +16,52 @@ export async function POST(request: NextRequest) {
     const from = formData.get('From') as string;
     const to = formData.get('To') as string;
     const callStatus = formData.get('CallStatus') as string;
+    const callerId = formData.get('CallerId') as string;  // Get the selected caller ID
 
-    console.log('🎯 Voice webhook called:', { callSid, from, to, callStatus });
+    console.log('🎯 Voice webhook called:', { callSid, from, to, callStatus, callerId });
 
     // Check if this is a browser-initiated call (outbound from web)
     if (from && from.startsWith('client:user_')) {
       console.log('📱 Browser-initiated call detected');
       
+      // Use the CallerId passed from the browser if available
+      let selectedCallerId = callerId;
+      
+      // If no CallerId was passed, fall back to user's first number
+      if (!selectedCallerId) {
+        const userId = from.replace('client:user_', '');
+        
+        const { data: userNumbers, error } = await supabase
+          .from('phone_numbers')
+          .select('phone_number')
+          .eq('user_id', userId)
+          .eq('capabilities->voice', true)
+          .order('date_created', { ascending: false })
+          .limit(1);
+
+        if (error || !userNumbers || userNumbers.length === 0) {
+          console.error('No voice-capable numbers found for user:', userId, error);
+          
+          const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+          <Response>
+            <Say voice="alice">Sorry, you need to purchase a phone number with voice capabilities to make calls. Please visit your dashboard to purchase a number.</Say>
+          </Response>`;
+
+          return new NextResponse(errorTwiml, {
+            status: 200,
+            headers: { 'Content-Type': 'text/xml' },
+          });
+        }
+
+        selectedCallerId = userNumbers[0].phone_number;
+      }
+      
+      console.log('📞 Using caller ID:', selectedCallerId);
+      
       // For browser calls, 'To' contains the actual phone number to dial
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
       <Response>
-        <Dial callerId="${process.env.TWILIO_PHONE_NUMBER || '+15551234567'}" 
+        <Dial callerId="${selectedCallerId}" 
               action="/api/voice/dial-status" 
               timeout="30"
               record="true">
