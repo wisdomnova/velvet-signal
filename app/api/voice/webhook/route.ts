@@ -7,7 +7,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-export async function POST(request: NextRequest) { 
+export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData(); 
     
@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
     }
 
     // For incoming calls to your Twilio number
-    console.log('📞 Incoming call detected - From:', from, 'To:', to);
+    console.log('📞 Checking for incoming call to number:', to);
     
     const { data: phoneNumber, error } = await supabase
       .from('phone_numbers') 
@@ -104,18 +104,11 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error || !phoneNumber) {
-      console.error('❌ No user found for phone number:', to, 'Error:', error);
-      
-      // List all numbers in database for debugging
-      const { data: allNumbers } = await supabase
-        .from('phone_numbers')
-        .select('phone_number, user_id');
-      
-      console.log('📋 Available numbers in database:', allNumbers);
+      console.error('❌ No user found for phone number:', to, error);
       
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
       <Response>
-        <Say voice="alice">Sorry, this number is not available. The call could not be completed.</Say>
+        <Say voice="alice">Sorry, this number is not available.</Say>
       </Response>`;
 
       return new NextResponse(twiml, {
@@ -134,7 +127,7 @@ export async function POST(request: NextRequest) {
         from_number: from,
         to_number: to,
         direction: 'inbound',
-        status: callStatus || 'ringing',
+        status: callStatus,
         user_id: phoneNumber.user_id,
         date_created: new Date().toISOString(),
       });
@@ -145,7 +138,7 @@ export async function POST(request: NextRequest) {
       console.log('✅ Incoming call saved to database');
     }
 
-    // Ring browser client for 20 seconds, then voicemail
+    // Ring browser client, then voicemail
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>
       <Dial timeout="20" action="/api/calls/status">
@@ -156,7 +149,7 @@ export async function POST(request: NextRequest) {
       <Say voice="alice">Thank you for your message. Goodbye.</Say>
     </Response>`;
 
-    console.log('📋 Returning TwiML to ring browser client: user_' + phoneNumber.user_id);
+    console.log('📋 Returning TwiML for incoming call');
     return new NextResponse(twiml, {
       status: 200,
       headers: { 'Content-Type': 'text/xml' },
@@ -167,7 +160,7 @@ export async function POST(request: NextRequest) {
     
     const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>
-      <Say voice="alice">Sorry, there was an error processing your call. Please try again later.</Say>
+      <Say voice="alice">Sorry, there was an error processing your call.</Say>
     </Response>`;
 
     return new NextResponse(errorTwiml, {
@@ -175,9 +168,4 @@ export async function POST(request: NextRequest) {
       headers: { 'Content-Type': 'text/xml' },
     });
   }
-} 
-
-
-
-
-
+}

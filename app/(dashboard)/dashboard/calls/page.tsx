@@ -10,7 +10,7 @@ import {
   PhoneIncoming, 
   PhoneOutgoing, 
   Search, 
-  Plus,   
+  Plus,  
   Clock, 
   User,
   Calendar,
