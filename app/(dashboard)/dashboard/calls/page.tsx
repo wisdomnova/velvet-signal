@@ -293,117 +293,131 @@ export default function CallsPage() {
     });
   };
 
-const initializeVoice = async () => {
-  try {
-    setVoiceError(null);
-    console.log('🔧 Starting voice initialization...');
-    
-    // Get access token
-    const response = await fetch('/api/voice/token', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-
-    console.log('📡 Voice token response status:', response.status);
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error('❌ Voice token error:', errorData);
-      throw new Error(errorData.error || 'Failed to get voice token');
-    }
-
-    const { token: accessToken, identity } = await response.json();
-    console.log('✅ Voice token received for identity:', identity);
-    console.log('🔑 Token length:', accessToken?.length);
-     
-    // Initialize Twilio Device with valid options only
-    const twilioDevice = new Device(accessToken, { 
-      logLevel: 1,
-      allowIncomingWhileBusy: false,
-      closeProtection: true,
-    });
-    
-    console.log('🎯 Twilio Device created, registering...');
-    
-    twilioDevice.on('ready', () => {
-      console.log('✅ Twilio Device ready!');
-      setIsVoiceReady(true);
-      setRetryCount(0);
+  const initializeVoice = async () => {
+    try {
       setVoiceError(null);
-    });
-
-    twilioDevice.on('error', (error) => {
-      console.error('❌ Twilio Device error:', error);
-      console.error('Error code:', error.code);
-      console.error('Error message:', error.message);
-      console.error('Error details:', error);
-      setVoiceError(`${error.code}: ${error.message}` || 'Voice connection error');
-      setIsVoiceReady(false);
-    });
-
-    twilioDevice.on('offline', () => {
-      console.log('📴 Twilio Device offline');
-      setIsVoiceReady(false);
-      setVoiceError('Device offline');
-    });
-
-    twilioDevice.on('registered', () => {
-      console.log('📋 Twilio Device registered successfully');
-    });
-
-    twilioDevice.on('unregistered', () => {
-      console.log('📋 Twilio Device unregistered');
-      setIsVoiceReady(false);
-    });
-
-    twilioDevice.on('incoming', (call) => {
-      console.log('🎯 Incoming call from Twilio Device:', call.parameters.From);
+      console.log('🔧 Starting voice initialization...');
       
-      setIncomingCall(call);
-      setActiveCall({
-        sid: call.parameters.CallSid || '',
-        status: 'ringing',
-        direction: 'inbound',
-        from: call.parameters.From || '',
-        to: call.parameters.To || '',
+      // Get access token
+      const response = await fetch('/api/voice/token', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
       });
 
-      call.on('accept', () => {
-        console.log('Incoming call accepted');
-        setIncomingCall(null);
-        currentCallRef.current = call;
-        setActiveCall(prev => prev ? { ...prev, status: 'in-progress' } : null);
+      console.log('📡 Voice token response status:', response.status);
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('❌ Voice token error:', errorData);
+        throw new Error(errorData.error || 'Failed to get voice token');
+      }
+
+      const { token: accessToken, identity } = await response.json();
+      console.log('✅ Voice token received for identity:', identity);
+      console.log('🔑 Token length:', accessToken?.length);
+       
+      // Initialize Twilio Device with valid options only
+      const twilioDevice = new Device(accessToken, { 
+        logLevel: 1,
+        allowIncomingWhileBusy: false,
+        closeProtection: true,
+      });
+      
+      console.log('🎯 Twilio Device created, registering...');
+      
+      // Listen for BOTH ready and registered events
+      twilioDevice.on('ready', () => {
+        console.log('✅ Twilio Device ready event fired!');
+        setIsVoiceReady(true);
+        setRetryCount(0);
+        setVoiceError(null);
       });
 
-      call.on('disconnect', () => {
-        console.log('Incoming call ended');
-        setActiveCall(null);
-        setIncomingCall(null);
-        currentCallRef.current = null;
-        setIsMuted(false);
-        fetchCalls();
+      twilioDevice.on('registered', () => {
+        console.log('📋 Twilio Device registered successfully');
+        // Set voice ready on registered event as well
+        setIsVoiceReady(true);
+        setRetryCount(0);
+        setVoiceError(null);
       });
 
-      call.on('reject', () => {
-        console.log('Incoming call rejected');
-        setActiveCall(null);
-        setIncomingCall(null);
-        currentCallRef.current = null;
+      twilioDevice.on('error', (error) => {
+        console.error('❌ Twilio Device error:', error);
+        console.error('Error code:', error.code);
+        console.error('Error message:', error.message);
+        console.error('Error details:', error);
+        setVoiceError(`${error.code}: ${error.message}` || 'Voice connection error');
+        setIsVoiceReady(false);
       });
-    });
 
-    console.log('🚀 Starting device registration...');
-    await twilioDevice.register();
-    setDevice(twilioDevice);
-    console.log('🎉 Device registration complete');
-    
-  } catch (error) {
-    console.error('❌ Voice initialization failed:', error);
-    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack');
-    setVoiceError(error instanceof Error ? error.message : 'Failed to initialize voice');
-    setRetryCount(prev => prev + 1);
-  }
-};
+      twilioDevice.on('offline', () => {
+        console.log('📴 Twilio Device offline');
+        setIsVoiceReady(false);
+        setVoiceError('Device offline');
+      });
+
+      twilioDevice.on('unregistered', () => {
+        console.log('📋 Twilio Device unregistered');
+        setIsVoiceReady(false);
+      });
+
+      twilioDevice.on('incoming', (call) => {
+        console.log('🎯 Incoming call from Twilio Device:', call.parameters.From);
+        
+        setIncomingCall(call);
+        setActiveCall({
+          sid: call.parameters.CallSid || '',
+          status: 'ringing',
+          direction: 'inbound',
+          from: call.parameters.From || '',
+          to: call.parameters.To || '',
+        });
+
+        call.on('accept', () => {
+          console.log('Incoming call accepted');
+          setIncomingCall(null);
+          currentCallRef.current = call;
+          setActiveCall(prev => prev ? { ...prev, status: 'in-progress' } : null);
+        });
+
+        call.on('disconnect', () => {
+          console.log('Incoming call ended');
+          setActiveCall(null);
+          setIncomingCall(null);
+          currentCallRef.current = null;
+          setIsMuted(false);
+          fetchCalls();
+        });
+
+        call.on('reject', () => {
+          console.log('Incoming call rejected');
+          setActiveCall(null);
+          setIncomingCall(null);
+          currentCallRef.current = null;
+        });
+      });
+
+      console.log('🚀 Starting device registration...');
+      await twilioDevice.register();
+      setDevice(twilioDevice);
+      console.log('🎉 Device registration complete');
+      
+      // Add a timeout fallback to set voice ready if events don't fire
+      setTimeout(() => {
+        if (twilioDevice.state === 'registered') {
+          console.log('🔄 Fallback: Setting voice ready based on device state');
+          setIsVoiceReady(true);
+          setVoiceError(null);
+        }
+      }, 2000);
+      
+    } catch (error) {
+      console.error('❌ Voice initialization failed:', error);
+      console.error('Error stack:', error instanceof Error ? error.stack : 'No stack');
+      setVoiceError(error instanceof Error ? error.message : 'Failed to initialize voice');
+      setRetryCount(prev => prev + 1);
+    }
+  };
 
   const fetchCalls = async () => {
     try {
