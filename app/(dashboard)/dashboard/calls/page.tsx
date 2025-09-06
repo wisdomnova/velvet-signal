@@ -458,67 +458,67 @@ export default function CallsPage() {
     }
   };
 
-const makeWebCall = async () => {
-  if (!newCallTo.trim() || !device || !isVoiceReady || !isValidPhoneNumber(newCallTo)) return;
+  const makeWebCall = async () => {
+    if (!newCallTo.trim() || !device || !isVoiceReady || !isValidPhoneNumber(newCallTo)) return;
 
-  if (!selectedFromNumber) {
-    alert('Please select a phone number to call from');
-    return;
-  }
+    // Check if user has selected a number to call from
+    if (!selectedFromNumber) {
+      alert('Please select a phone number to call from');
+      return;
+    }
 
-  try {
-    setIsDialing(true);
-    console.log('🔄 Starting web call to:', newCallTo, 'from:', selectedFromNumber);
-    
-    // Make the call using the webhook directly
-    const call = await device.connect({
-      params: { 
-        To: newCallTo,
-        CallerId: selectedFromNumber  // Pass the selected caller ID
-      }
-    });
-    
-    console.log('📞 Web call initiated:', call);
-    
-    currentCallRef.current = call;
-    setActiveCall({
-      sid: '',
-      status: 'connecting',
-      direction: 'outbound',
-      from: selectedFromNumber,
-      to: newCallTo,
-    });
+    try {
+      setIsDialing(true);
+      console.log('🔄 Starting web call to:', newCallTo, 'from:', selectedFromNumber);
+      
+      const call = await device.connect({
+        params: { 
+          To: newCallTo,
+          CallerId: selectedFromNumber  // Pass the selected caller ID
+        }
+      });
+      
+      console.log('📞 Web call initiated:', call);
+      
+      currentCallRef.current = call;
+      setActiveCall({
+        sid: '',
+        status: 'connecting',
+        direction: 'outbound',
+        from: selectedFromNumber,  // Show the selected number
+        to: newCallTo,
+      });
 
-    call.on('accept', () => {
-      console.log('✅ Outbound call connected');
-      setActiveCall(prev => prev ? { ...prev, status: 'in-progress' } : null);
-    });
+      call.on('accept', () => {
+        console.log('✅ Outbound call connected');
+        setActiveCall(prev => prev ? { ...prev, status: 'in-progress' } : null);
+      });
 
-    call.on('disconnect', () => {
-      console.log('📴 Outbound call ended');
-      setActiveCall(null);
-      currentCallRef.current = null;
-      setIsMuted(false);
-      fetchCalls();
-    });
+      call.on('disconnect', () => {
+        console.log('📴 Outbound call ended');
+        setActiveCall(null);
+        currentCallRef.current = null;
+        setIsMuted(false);
+        fetchCalls();
+      });
 
-    call.on('error', (error) => {
-      console.error('❌ Call error:', error);
-      alert('Call failed: ' + error.message);
-      setActiveCall(null);
-      currentCallRef.current = null;
-    });
+      call.on('error', (error) => {
+        console.error('❌ Call error:', error);
+        alert('Call failed: ' + error.message);
+        setActiveCall(null);
+        currentCallRef.current = null;
+      });
 
-    setNewCallTo('');
-    setShowNewCall(false);
-    
-  } catch (error) {
-    console.error('❌ Failed to make call:', error);
-    alert('Failed to make call: ' + error);
-  } finally {
-    setIsDialing(false);
-  }
-};
+      setNewCallTo('');
+      setShowNewCall(false);
+      
+    } catch (error) {
+      console.error('❌ Failed to make call:', error);
+      alert('Failed to make call: ' + error);
+    } finally {
+      setIsDialing(false);
+    }
+  };
 
   const makeApiCall = async () => {
     if (!newCallTo.trim() || !isValidPhoneNumber(newCallTo)) return;
