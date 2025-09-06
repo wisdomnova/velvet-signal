@@ -1,11 +1,10 @@
-// ./app/(dashboard)/dashboard/messages/page.tsx
-
+// app/(dashboard)/dashboard/messages/page.tsx
 "use client";
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useAuthStore } from '@/store/auth';
-import { createClient } from '@supabase/supabase-js'; // Add this import
+import { createClient } from '@supabase/supabase-js';
 import { 
   MessageSquare, 
   Send,  
@@ -17,8 +16,9 @@ import {
   User,
   Filter, 
   MoreVertical,
-  Bell, // Add this for notifications
-  ChevronDown // Add this for dropdowns
+  Bell,
+  ChevronDown,
+  X // Add this for close button
 } from 'lucide-react';
 
 // Add Supabase client for realtime
@@ -207,47 +207,91 @@ export default function MessagesPage() {
     }
   };
 
-  const sendMessage = async () => {
-    if (!newMessage.trim()) return;
+const sendMessage = async () => {
+  if (!newMessage.trim()) return;
 
-    const to = selectedConversation || newMessageTo;
-    if (!to) return;
+  const to = selectedConversation || newMessageTo;
+  if (!to) return;
 
-    if (!selectedFromNumber) {
-      alert('Please select a phone number to send from');
-      return;
-    }
+  if (!selectedFromNumber) {
+    alert('Please select a phone number to send from');
+    return;
+  }
 
-    try {
-      setIsSending(true);
-      const response = await fetch('/api/sms/send', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          to,
-          body: newMessage,
-          from: selectedFromNumber,
-        }),
-      });
+  try {
+    setIsSending(true);
+    console.log('📤 Sending SMS:', {
+      to,
+      body: newMessage,
+      from: selectedFromNumber
+    });
 
-      if (response.ok) {
-        setNewMessage('');
+    const response = await fetch('/api/sms/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        to,
+        body: newMessage,
+        from: selectedFromNumber, // ✅ This should be sent
+      }),
+    });
+
+    console.log('📡 SMS API response status:', response.status);
+
+    if (response.ok) {
+      const responseData = await response.json();
+      console.log('✅ SMS sent successfully:', responseData);
+      
+      setNewMessage('');
+      // ✅ FIXED: Don't clear these when continuing conversation
+      if (showNewMessage) {
         setNewMessageTo('');
         setShowNewMessage(false);
-        await fetchConversations();
-      } else {
-        const errorData = await response.json();
-        alert('Failed to send message: ' + (errorData.error || 'Unknown error'));
+        // After sending first message in new conversation, switch to that conversation
+        setSelectedConversation(to);
       }
-    } catch (error) {
-      console.error('Failed to send message:', error);
-      alert('Failed to send message');
-    } finally {
-      setIsSending(false);
+      
+      await fetchConversations();
+    } else {
+      const errorData = await response.json();
+      console.error('❌ SMS API error:', errorData);
+      alert('Failed to send message: ' + (errorData.error || 'Unknown error'));
     }
+  } catch (error) {
+    console.error('❌ Failed to send message:', error);
+    alert('Failed to send message: ' + (error instanceof Error ? error.message : 'Network error'));
+  } finally {
+    setIsSending(false);
+  }
+};
+
+  // 🔧 FIXED: Handle new message creation
+  const handleNewMessage = () => {
+    console.log('📝 Starting new message...');
+    setSelectedConversation(null); // Clear any selected conversation
+    setShowNewMessage(true); // Show new message form
+    setNewMessage(''); // Clear message input
+    setNewMessageTo(''); // Clear recipient input
+  };
+
+  // 🔧 FIXED: Handle conversation selection
+  const handleConversationSelect = (phoneNumber: string) => {
+    console.log('💬 Selecting conversation:', phoneNumber);
+    setSelectedConversation(phoneNumber);
+    setShowNewMessage(false); // Hide new message form
+    setNewMessageTo(''); // Clear new message recipient
+  };
+
+  // 🔧 FIXED: Handle closing new message form
+  const handleCloseNewMessage = () => {
+    console.log('❌ Closing new message form');
+    setShowNewMessage(false);
+    setNewMessage('');
+    setNewMessageTo('');
+    // Don't automatically select a conversation - let user choose
   };
 
   const filteredConversations = conversations.filter(conv =>
@@ -312,9 +356,11 @@ export default function MessagesPage() {
         <div className="p-6 border-b border-gray-100">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-bold text-gray-900">Messages</h2>
+            {/* 🔧 FIXED: New message button */}
             <button
-              onClick={() => setShowNewMessage(true)}
+              onClick={handleNewMessage}
               className="p-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors"
+              title="Start new message"
             >
               <Plus className="w-4 h-4" />
             </button>
@@ -347,9 +393,9 @@ export default function MessagesPage() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.4, delay: index * 0.05 }}
-                  onClick={() => setSelectedConversation(conversation.phoneNumber)}
+                  onClick={() => handleConversationSelect(conversation.phoneNumber)}
                   className={`w-full p-4 rounded-xl text-left hover:bg-gray-50 transition-colors mb-2 ${
-                    selectedConversation === conversation.phoneNumber
+                    selectedConversation === conversation.phoneNumber && !showNewMessage
                       ? 'bg-blue-50 border-2 border-blue-200'
                       : 'border border-transparent'
                   }`}
@@ -387,6 +433,12 @@ export default function MessagesPage() {
             <div className="flex flex-col items-center justify-center h-32 text-center p-6">
               <MessageSquare className="w-8 h-8 text-gray-400 mb-2" />
               <p className="text-gray-500 text-sm">No conversations yet</p>
+              <button
+                onClick={handleNewMessage}
+                className="mt-2 text-blue-600 hover:text-blue-700 text-sm font-medium"
+              >
+                Start your first conversation
+              </button>
             </div>
           )}
         </div>
@@ -399,7 +451,7 @@ export default function MessagesPage() {
         transition={{ duration: 0.6, delay: 0.1 }}
         className="flex-1 bg-white rounded-2xl border border-gray-100 flex flex-col"
       >
-        {selectedConv ? (
+        {selectedConv && !showNewMessage ? (
           <>
             {/* Chat Header */}
             <div className="p-6 border-b border-gray-100">
@@ -418,6 +470,13 @@ export default function MessagesPage() {
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
+                  <button 
+                    onClick={handleNewMessage}
+                    className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+                    title="New message"
+                  >
+                    <Plus className="w-5 h-5" />
+                  </button>
                   <button className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
                     <Phone className="w-5 h-5" />
                   </button>
@@ -530,11 +589,25 @@ export default function MessagesPage() {
             </div>
           </>
         ) : showNewMessage ? (
-          /* New Message Form */
-          <div className="flex-1 flex flex-col justify-center items-center p-6">
-            <div className="w-full max-w-md">
-              <h3 className="text-xl font-semibold text-gray-900 mb-6 text-center">New Message</h3>
-              <div className="space-y-4">
+          /* 🔧 IMPROVED: New Message Form */
+          <div className="flex-1 flex flex-col">
+            {/* New Message Header */}
+            <div className="p-6 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xl font-semibold text-gray-900">New Message</h3>
+                <button
+                  onClick={handleCloseNewMessage}
+                  className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+                  title="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* New Message Form */}
+            <div className="flex-1 p-6">
+              <div className="max-w-md mx-auto space-y-6">
                 {/* From Number Selector */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">From</label>
@@ -552,6 +625,7 @@ export default function MessagesPage() {
                   </select>
                 </div>
 
+                {/* To Number Input */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">To</label>
                   <input
@@ -562,6 +636,8 @@ export default function MessagesPage() {
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-gray-900"
                   />
                 </div>
+
+                {/* Message Input */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Message</label>
                   <textarea
@@ -572,15 +648,25 @@ export default function MessagesPage() {
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-gray-900 resize-none"
                   />
                 </div>
+
+                {/* Action Buttons */}
                 <div className="flex space-x-3">
                   <button
-                    onClick={() => setShowNewMessage(false)}
+                    onClick={handleCloseNewMessage}
                     className="flex-1 px-4 py-3 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors"
                   >
                     Cancel
                   </button>
                   <button
-                    onClick={sendMessage}
+                    onClick={() => {
+                      console.log('🔄 Send button clicked:', {
+                        newMessage: newMessage.trim(),
+                        newMessageTo: newMessageTo.trim(),
+                        selectedFromNumber,
+                        isSending
+                      });
+                      sendMessage();
+                    }}
                     disabled={!newMessage.trim() || !newMessageTo.trim() || !selectedFromNumber || isSending}
                     className="flex-1 px-4 py-3 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                   >
@@ -606,7 +692,7 @@ export default function MessagesPage() {
             <h3 className="text-lg font-medium text-gray-900 mb-2">No conversation selected</h3>
             <p className="text-gray-500 mb-6">Choose a conversation from the sidebar or start a new one</p>
             <button
-              onClick={() => setShowNewMessage(true)}
+              onClick={handleNewMessage}
               className="bg-gray-900 text-white px-6 py-3 rounded-xl font-semibold hover:bg-gray-800 transition-colors flex items-center"
             >
               <Plus className="w-4 h-4 mr-2" />
@@ -615,6 +701,6 @@ export default function MessagesPage() {
           </div>
         )}
       </motion.div>
-    </div>
+    </div> 
   );
 }
