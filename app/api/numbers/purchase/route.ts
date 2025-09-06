@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
       phoneNumber,
       voiceUrl: `${baseUrl}/api/voice/webhook`,
       voiceMethod: 'POST',
-      smsUrl: `${baseUrl}/api/sms/webhook`, 
+      smsUrl: `${baseUrl}/api/sms/webhook`,  
       smsMethod: 'POST',
       statusCallback: `${baseUrl}/api/calls/status`,
       statusCallbackMethod: 'POST'
