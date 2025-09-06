@@ -1,11 +1,9 @@
-// ./app/(dashboard)/dashboard/calls/page.tsx
-
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useAuthStore } from '@/store/auth';
-import { createClient } from '@supabase/supabase-js'; // Add this import
+import { createClient } from '@supabase/supabase-js';
 import { 
   Phone, 
   PhoneCall, 
@@ -25,8 +23,8 @@ import {
   Volume2,
   VolumeX,
   AlertTriangle,
-  Bell, // Add this for notifications
-  ChevronDown // Add this for dropdown
+  Bell,
+  ChevronDown
 } from 'lucide-react'; 
 
 // Import the Twilio Voice SDK
@@ -44,7 +42,7 @@ interface Call {
   from: string;
   to: string;
   direction: 'inbound' | 'outbound';
-  status: 'completed' | 'busy' | 'no-answer' | 'failed' | 'in-progress';
+  status: 'completed' | 'busy' | 'no-answer' | 'failed' | 'in-progress' | 'ringing' | 'queued' | 'initiated';
   duration: number;
   dateCreated: string;
   price?: string;
@@ -96,6 +94,9 @@ export default function CallsPage() {
   const [newCallNotification, setNewCallNotification] = useState<Call | null>(null);
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   
+  // Error handling state
+  const [componentError, setComponentError] = useState<string | null>(null);
+  
   const currentCallRef = useRef<any>(null);
 
   useEffect(() => {
@@ -112,6 +113,17 @@ export default function CallsPage() {
       // Cleanup subscriptions
       supabase.removeAllChannels();
     };
+  }, []);
+
+  // Add error boundary effect
+  useEffect(() => {
+    const handleError = (error: ErrorEvent) => {
+      console.error('Component error caught:', error);
+      setComponentError(error.message);
+    };
+
+    window.addEventListener('error', handleError);
+    return () => window.removeEventListener('error', handleError);
   }, []);
 
   const fetchUserNumbers = async () => {
@@ -141,7 +153,7 @@ export default function CallsPage() {
     }
   };
 
-  // Setup real-time subscriptions for incoming calls and messages
+  // Setup real-time subscriptions for incoming calls
   const setupRealtimeSubscriptions = async () => {
     try {
       // Get user ID from token
@@ -165,15 +177,29 @@ export default function CallsPage() {
         }, (payload) => {
           console.log('🔥 Real-time call received!', payload);
           
-          const newCall = payload.new as any;
+          const newCallData = payload.new as any;
+          
+          // Map database fields to Call interface
+          const mappedCall: Call = {
+            id: newCallData.id,
+            sid: newCallData.sid,
+            from: newCallData.from_number || newCallData.from,
+            to: newCallData.to_number || newCallData.to,
+            direction: newCallData.direction,
+            status: newCallData.status,
+            duration: newCallData.duration || 0,
+            dateCreated: newCallData.date_created || newCallData.dateCreated,
+            price: newCallData.price,
+            recordingUrl: newCallData.recording_url || newCallData.recordingUrl,
+          };
           
           // Add to calls list immediately
-          setCalls(prev => [newCall, ...prev]);
+          setCalls(prev => [mappedCall, ...prev]);
           
           // Show notification for incoming calls
-          if (newCall.direction === 'inbound' && newCall.status === 'ringing') {
-            setNewCallNotification(newCall);
-            showBrowserNotification('Incoming Call', `Call from ${newCall.from_number}`);
+          if (mappedCall.direction === 'inbound' && ['ringing', 'in-progress'].includes(mappedCall.status)) {
+            setNewCallNotification(mappedCall);
+            showBrowserNotification('Incoming Call', `Call from ${mappedCall.from}`);
             
             // Auto-hide notification after 10 seconds
             setTimeout(() => setNewCallNotification(null), 10000);
@@ -187,10 +213,26 @@ export default function CallsPage() {
         }, (payload) => {
           console.log('📞 Call status updated!', payload);
           
+          const updatedCallData = payload.new as any;
+          
+          // Map database fields to Call interface  
+          const mappedCall: Call = {
+            id: updatedCallData.id,
+            sid: updatedCallData.sid,
+            from: updatedCallData.from_number || updatedCallData.from,
+            to: updatedCallData.to_number || updatedCallData.to,
+            direction: updatedCallData.direction,
+            status: updatedCallData.status,
+            duration: updatedCallData.duration || 0,
+            dateCreated: updatedCallData.date_created || updatedCallData.dateCreated,
+            price: updatedCallData.price,
+            recordingUrl: updatedCallData.recording_url || updatedCallData.recordingUrl,
+          };
+          
           // Update call in the list
           setCalls(prev => prev.map(call => 
-            call.sid === payload.new.sid 
-              ? { ...call, ...payload.new }
+            call.sid === mappedCall.sid 
+              ? mappedCall
               : call
           ));
         })
@@ -203,6 +245,7 @@ export default function CallsPage() {
       
     } catch (error) {
       console.error('❌ Failed to setup real-time subscriptions:', error);
+      setComponentError('Failed to setup real-time subscriptions');
     }
   };
 
@@ -328,6 +371,8 @@ export default function CallsPage() {
   const fetchCalls = async () => {
     try {
       setIsLoading(true);
+      setComponentError(null);
+      
       const response = await fetch('/api/calls/history', {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -336,10 +381,27 @@ export default function CallsPage() {
 
       if (response.ok) {
         const data = await response.json();
-        setCalls(data.calls);
+        // Ensure data.calls is an array and map fields properly
+        const mappedCalls = (data.calls || []).map((call: any) => ({
+          id: call.id,
+          sid: call.sid,
+          from: call.from_number || call.from,
+          to: call.to_number || call.to,
+          direction: call.direction,
+          status: call.status,
+          duration: call.duration || 0,
+          dateCreated: call.date_created || call.dateCreated,
+          price: call.price,
+          recordingUrl: call.recording_url || call.recordingUrl,
+        }));
+        setCalls(mappedCalls);
+      } else {
+        console.error('Failed to fetch calls:', response.status, response.statusText);
+        setComponentError('Failed to load call history');
       }
     } catch (error) {
       console.error('Failed to fetch calls:', error);
+      setComponentError('Failed to load call history');
     } finally {
       setIsLoading(false);
     }
@@ -483,7 +545,11 @@ export default function CallsPage() {
       case 'failed':
         return 'text-red-600 bg-red-50';
       case 'in-progress':
+      case 'ringing':
         return 'text-blue-600 bg-blue-50';
+      case 'queued':
+      case 'initiated':
+        return 'text-purple-600 bg-purple-50';
       default:
         return 'text-gray-600 bg-gray-50';
     }
@@ -525,6 +591,28 @@ export default function CallsPage() {
         </div>
       </div>
 
+      {/* Component Error Display */}
+      {componentError && (
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-red-50 border border-red-200 rounded-xl p-4"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <AlertTriangle className="w-5 h-5 text-red-600 mr-3" />
+              <p className="text-red-800 font-medium">{componentError}</p>
+            </div>
+            <button 
+              onClick={() => setComponentError(null)}
+              className="text-red-400 hover:text-red-600 transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        </motion.div>
+      )}
+
       {/* Real-time Call Notification */}
       {newCallNotification && (
         <motion.div
@@ -538,10 +626,16 @@ export default function CallsPage() {
               <Bell className="w-5 h-5 text-blue-600" />
             </div>
             <div className="flex-1">
-              <h4 className="font-semibold text-gray-900">Incoming Call</h4>
-              <p className="text-sm text-gray-600">From: {newCallNotification.from}</p>
+              <h4 className="font-semibold text-gray-900">
+                {newCallNotification.direction === 'inbound' ? 'Incoming Call' : 'Call Update'}
+              </h4>
+              <p className="text-sm text-gray-600">
+                {newCallNotification.direction === 'inbound' 
+                  ? `From: ${newCallNotification.from}` 
+                  : `To: ${newCallNotification.to}`}
+              </p>
               <p className="text-xs text-gray-500">
-                {new Date(newCallNotification.dateCreated).toLocaleTimeString()}
+                Status: {newCallNotification.status} • {new Date(newCallNotification.dateCreated).toLocaleTimeString()}
               </p>
             </div>
             <button 
@@ -711,6 +805,9 @@ export default function CallsPage() {
             <option value="no-answer">No Answer</option>
             <option value="failed">Failed</option>
             <option value="in-progress">In Progress</option>
+            <option value="ringing">Ringing</option>
+            <option value="queued">Queued</option>
+            <option value="initiated">Initiated</option>
           </select>
 
           <select
