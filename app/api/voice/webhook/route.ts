@@ -1,5 +1,4 @@
-// ./app/api/voice/webhook/route.ts
-
+// app/api/voice/webhook/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
@@ -16,7 +15,7 @@ export async function POST(request: NextRequest) {
     const from = formData.get('From') as string;
     const to = formData.get('To') as string;
     const callStatus = formData.get('CallStatus') as string;
-    const callerId = formData.get('CallerId') as string;  // Get the selected caller ID
+    const callerId = formData.get('CallerId') as string;
 
     console.log('🎯 Voice webhook called:', { callSid, from, to, callStatus, callerId });
 
@@ -24,13 +23,28 @@ export async function POST(request: NextRequest) {
     if (from && from.startsWith('client:user_')) {
       console.log('📱 Browser-initiated call detected');
       
-      // Use the CallerId passed from the browser if available
+      const userId = from.replace('client:user_', '');
+      
+      // Save the outbound call to database immediately
+      const { error: insertError } = await supabase
+        .from('calls')
+        .insert({
+          sid: callSid,
+          from_number: callerId || 'unknown',
+          to_number: to,
+          direction: 'outbound',
+          status: callStatus || 'initiated',
+          user_id: userId,
+          date_created: new Date().toISOString(),
+        });
+
+      if (insertError) {
+        console.error('Error saving outbound call:', insertError);
+      }
+      
       let selectedCallerId = callerId;
       
-      // If no CallerId was passed, fall back to user's first number
       if (!selectedCallerId) {
-        const userId = from.replace('client:user_', '');
-        
         const { data: userNumbers, error } = await supabase
           .from('phone_numbers')
           .select('phone_number')
@@ -44,7 +58,7 @@ export async function POST(request: NextRequest) {
           
           const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
           <Response>
-            <Say voice="alice">Sorry, you need to purchase a phone number with voice capabilities to make calls. Please visit your dashboard to purchase a number.</Say>
+            <Say voice="alice">Sorry, you need to purchase a phone number with voice capabilities to make calls.</Say>
           </Response>`;
 
           return new NextResponse(errorTwiml, {
@@ -54,15 +68,19 @@ export async function POST(request: NextRequest) {
         }
 
         selectedCallerId = userNumbers[0].phone_number;
+        
+        await supabase
+          .from('calls')
+          .update({ from_number: selectedCallerId })
+          .eq('sid', callSid);
       }
       
       console.log('📞 Using caller ID:', selectedCallerId);
       
-      // For browser calls, 'To' contains the actual phone number to dial
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
       <Response>
         <Dial callerId="${selectedCallerId}" 
-              action="/api/voice/dial-status" 
+              action="/api/calls/status" 
               timeout="30"
               record="true">
           <Number>${to}</Number>
@@ -77,14 +95,16 @@ export async function POST(request: NextRequest) {
     }
 
     // For incoming calls to your Twilio number
+    console.log('📞 Checking for incoming call to number:', to);
+    
     const { data: phoneNumber, error } = await supabase
       .from('phone_numbers') 
-      .select('user_id')
+      .select('user_id, phone_number')
       .eq('phone_number', to)
       .single();
 
     if (error || !phoneNumber) {
-      console.error('Received call for unknown phone number:', to);
+      console.error('❌ No user found for phone number:', to, error);
       
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
       <Response>
@@ -96,6 +116,8 @@ export async function POST(request: NextRequest) {
         headers: { 'Content-Type': 'text/xml' },
       });
     }
+
+    console.log('✅ Found user for incoming call:', phoneNumber.user_id);
 
     // Save incoming call to database
     const { error: insertError } = await supabase
@@ -112,12 +134,14 @@ export async function POST(request: NextRequest) {
 
     if (insertError) {
       console.error('Error saving incoming call:', insertError);
+    } else {
+      console.log('✅ Incoming call saved to database');
     }
 
-    // Ring browser first, then voicemail
+    // Ring browser client, then voicemail
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>
-      <Dial timeout="20" action="/api/voice/dial-status">
+      <Dial timeout="20" action="/api/calls/status">
         <Client>user_${phoneNumber.user_id}</Client>
       </Dial>
       <Say voice="alice">Sorry, the person you're calling is not available. Please leave a message after the tone.</Say>
@@ -125,13 +149,14 @@ export async function POST(request: NextRequest) {
       <Say voice="alice">Thank you for your message. Goodbye.</Say>
     </Response>`;
 
+    console.log('📋 Returning TwiML for incoming call');
     return new NextResponse(twiml, {
       status: 200,
       headers: { 'Content-Type': 'text/xml' },
     });
 
   } catch (error) {
-    console.error('Error in voice webhook:', error);
+    console.error('❌ Error in voice webhook:', error);
     
     const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>
