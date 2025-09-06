@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
         id: savedCall.id,
         sid: savedCall.sid,
         from: savedCall.from_number,
-        to: savedCall.to_number,
+        to: savedCall.to_number, 
         direction: savedCall.direction,
         status: savedCall.status,
         dateCreated: savedCall.date_created,

@@ -19,7 +19,29 @@ export async function POST(request: NextRequest) {
 
     console.log('🎯 Voice webhook called:', { callSid, from, to, callStatus });
 
-    // Find the user who owns the 'to' phone number
+    // Check if this is a browser-initiated call (outbound from web)
+    if (from && from.startsWith('client:user_')) {
+      console.log('📱 Browser-initiated call detected');
+      
+      // For browser calls, 'To' contains the actual phone number to dial
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+      <Response>
+        <Dial callerId="${process.env.TWILIO_PHONE_NUMBER || '+15551234567'}" 
+              action="/api/voice/dial-status" 
+              timeout="30"
+              record="true">
+          <Number>${to}</Number>
+        </Dial>
+        <Say voice="alice">The call could not be completed. Please try again.</Say>
+      </Response>`;
+
+      return new NextResponse(twiml, {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      });
+    }
+
+    // For incoming calls to your Twilio number
     const { data: phoneNumber, error } = await supabase
       .from('phone_numbers') 
       .select('user_id')
@@ -28,10 +50,19 @@ export async function POST(request: NextRequest) {
 
     if (error || !phoneNumber) {
       console.error('Received call for unknown phone number:', to);
-      return NextResponse.json({ error: 'Phone number not found' }, { status: 404 });
+      
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+      <Response>
+        <Say voice="alice">Sorry, this number is not available.</Say>
+      </Response>`;
+
+      return new NextResponse(twiml, {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      });
     }
 
-    // Save incoming call to database (this will trigger real-time notification)
+    // Save incoming call to database
     const { error: insertError } = await supabase
       .from('calls')
       .insert({
@@ -46,11 +77,9 @@ export async function POST(request: NextRequest) {
 
     if (insertError) {
       console.error('Error saving incoming call:', insertError);
-    } else {
-      console.log('✅ Incoming call saved - Real-time notification should fire!');
     }
 
-    // TwiML response - choice between browser calling or voicemail
+    // Ring browser first, then voicemail
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>
       <Dial timeout="20" action="/api/voice/dial-status">
@@ -63,16 +92,20 @@ export async function POST(request: NextRequest) {
 
     return new NextResponse(twiml, {
       status: 200,
-      headers: {
-        'Content-Type': 'text/xml',
-      },
+      headers: { 'Content-Type': 'text/xml' },
     });
 
   } catch (error) {
     console.error('Error in voice webhook:', error);
-    return NextResponse.json(
-      { error: 'Webhook processing failed' },
-      { status: 500 }
-    );
+    
+    const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+    <Response>
+      <Say voice="alice">Sorry, there was an error processing your call.</Say>
+    </Response>`;
+
+    return new NextResponse(errorTwiml, {
+      status: 200,
+      headers: { 'Content-Type': 'text/xml' },
+    });
   }
-} 
+}

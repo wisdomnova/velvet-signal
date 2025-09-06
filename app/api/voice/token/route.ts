@@ -16,16 +16,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Authorization token required' }, { status: 401 });
     }
 
-    const decoded = verifyToken(token);
+    const decoded = verifyToken(token); 
     if (!decoded) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 
-    if (!process.env.TWILIO_API_KEY || !process.env.TWILIO_API_SECRET) {
-      return NextResponse.json({ error: 'Twilio API credentials not configured' }, { status: 500 });
+    // Enhanced environment variable validation
+    if (!process.env.TWILIO_API_KEY || !process.env.TWILIO_API_SECRET || !process.env.TWILIO_TWIML_APP_SID) {
+      console.error('Missing Twilio Voice SDK environment variables:', {
+        hasApiKey: !!process.env.TWILIO_API_KEY,
+        hasApiSecret: !!process.env.TWILIO_API_SECRET,
+        hasTwimlAppSid: !!process.env.TWILIO_TWIML_APP_SID
+      });
+      return NextResponse.json({ 
+        error: 'Twilio Voice SDK not configured. Missing API key, secret, or TwiML App SID' 
+      }, { status: 500 });
     }
 
     const identity = `user_${decoded.userId}`;
+
+    console.log('🎯 Generating voice token for:', identity);
 
     const accessToken = new AccessToken(
       process.env.TWILIO_ACCOUNT_SID!,
@@ -41,6 +51,8 @@ export async function POST(request: NextRequest) {
 
     accessToken.addGrant(voiceGrant);
 
+    console.log('✅ Voice token generated successfully for:', identity);
+
     return NextResponse.json({
       token: accessToken.toJwt(),
       identity 
@@ -48,6 +60,9 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Error generating voice token:', error);
-    return NextResponse.json({ error: 'Failed to generate token' }, { status: 500 });
+    return NextResponse.json({ 
+      error: 'Failed to generate token',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 });
   }
 }

@@ -39,4 +39,4 @@ export async function POST(request: NextRequest) {
     console.error('Error in recording webhook:', error);
     return new NextResponse('', { status: 200 });
   } 
-}
+} 
