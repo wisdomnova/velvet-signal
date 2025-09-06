@@ -235,7 +235,7 @@ const sendMessage = async () => {
       body: JSON.stringify({
         to,
         body: newMessage,
-        from: selectedFromNumber, // ✅ This should be sent
+        from: selectedFromNumber,
       }),
     });
 
@@ -245,16 +245,26 @@ const sendMessage = async () => {
       const responseData = await response.json();
       console.log('✅ SMS sent successfully:', responseData);
       
+      // Clear message input immediately
       setNewMessage('');
-      // ✅ FIXED: Don't clear these when continuing conversation
+      
+      // Handle new message vs existing conversation
       if (showNewMessage) {
+        // New conversation - switch to it after sending
         setNewMessageTo('');
         setShowNewMessage(false);
-        // After sending first message in new conversation, switch to that conversation
         setSelectedConversation(to);
+        
+        // Show success feedback
+        console.log('🎯 Switched to new conversation:', to);
       }
       
+      // Refresh conversations to show the new message
       await fetchConversations();
+      
+      // Optional: Show a brief success toast
+      console.log('🎉 Message sent successfully!');
+      
     } else {
       const errorData = await response.json();
       console.error('❌ SMS API error:', errorData);

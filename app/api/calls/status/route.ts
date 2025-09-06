@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
     const callSid = formData.get('CallSid') as string;
     const callStatus = formData.get('CallStatus') as string;
     const callDuration = formData.get('CallDuration') as string;
-    const recordingUrl = formData.get('RecordingUrl') as string;
+    const recordingUrl = formData.get('RecordingUrl') as string; 
     const price = formData.get('Price') as string;
     const answeredBy = formData.get('AnsweredBy') as string;
 
